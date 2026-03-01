@@ -20,9 +20,12 @@ class EncoderLayer(eqx.Module):
         Stage 1 — (1,  n, n) -> (8,  n, n)   [ENCODER_IN_CHANNELS -> ENCODER_INTER_STACK_CHANNELS]
         Stage 2 — (8,  n, n) -> (64, n, n)   [ENCODER_INTER_STACK_CHANNELS -> ENCODER_STACK_OUT_CHANNELS]
 
-    With N inputs the full layer maps:
-        xs:   (N, 1, n, n)  +  is_active_flags: (N,)
-        ->    (N, 64, n, n) +  out_active:       (N,)
+    All N stacks are then concatenated along the channel axis so the layer maps:
+        xs:   (N, 1, n, n)    +  is_active_flags: (N,)
+        ->    (64*N, n, n)    +  out_active:       (64*N,)
+
+    Each stack's single flag is broadcast across its 64 output channels, making
+    the output directly consumable by DecoderLayer which expects (M, n, n) + (M,).
 
     Inactive flags propagate naturally through each Encoder's own lax.cond gate
     — no separate layer-level gate is needed.
@@ -54,8 +57,8 @@ class EncoderLayer(eqx.Module):
         is_active_flags: (N,)          — per-input activity flags (bool)
 
         Returns:
-            out:        (N, 64, n, n)
-            out_active: (N,) bool
+            out:        (64*N, n, n)  — all stacks concatenated on axis 0
+            out_active: (64*N,) bool  — each stack flag broadcast over 64 channels
         """
         def _run_one_stack(enc1, enc2, x, active):
             # Stage 1: (1, n, n) -> (8, n, n)
@@ -64,6 +67,17 @@ class EncoderLayer(eqx.Module):
             out2, act2 = enc2(out1, act1)
             return out2, act2
 
-        return eqx.filter_vmap(_run_one_stack)(
+        # stacked_out:    (N, 64, n, n)
+        # stacked_active: (N,)
+        stacked_out, stacked_active = eqx.filter_vmap(_run_one_stack)(
             self.stage1_encs, self.stage2_encs, xs, is_active_flags
         )
+
+        # Flatten N stacks onto the leading axis: (N, 64, n, n) -> (64*N, n, n)
+        n64, n, m = stacked_out.shape[1], stacked_out.shape[2], stacked_out.shape[3]
+        out = stacked_out.reshape(-1, n, m)
+
+        # Broadcast each stack's flag over its 64 channels: (N,) -> (64*N,)
+        out_active = jnp.repeat(stacked_active, n64)
+
+        return out, out_active

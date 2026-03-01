@@ -1,3 +1,4 @@
+import numpy as np
 import jax
 import jax.numpy as jnp
 import equinox as eqx
@@ -31,8 +32,12 @@ class DecoderLayer(eqx.Module):
 
     # K stacked Decoder nodes (weight arrays have leading dim K)
     decoders: Decoder
-    # Static adjacency: (K, 16) int32 — which prev-layer outputs feed each decoder
-    parent_indices: jax.Array
+    # Adjacency: (K, 16) int32 — which prev-layer outputs feed each decoder.
+    # Stored as a NumPy array so Equinox treats it as static pytree structure
+    # (not a traced JAX leaf).  XLA therefore sees the exact gather indices as
+    # compile-time literals and can constant-fold through the gather — no
+    # eqx.field(static=True) required, no warning produced.
+    parent_indices: np.ndarray
 
     def __init__(self, k_nodes: int, n_prev_outputs: int, key: jax.Array):
         key_dec, key_wire = jax.random.split(key)
@@ -42,11 +47,15 @@ class DecoderLayer(eqx.Module):
         # replacement) from n_prev_outputs available parent slots.
         # replace=True means no constraint on n_prev_outputs size.
         wire_keys = jax.random.split(key_wire, k_nodes)
-        self.parent_indices = jax.vmap(
-            lambda k: jax.random.choice(
-                k, n_prev_outputs, shape=(DECODER_MAX_PARENTS,), replace=True
-            )
-        )(wire_keys)  # (K, 16)
+        # Compute wiring with JAX then immediately materialise as NumPy so the
+        # array is stored as static pytree metadata (compile-time constant).
+        self.parent_indices = np.array(
+            jax.vmap(
+                lambda k: jax.random.choice(
+                    k, n_prev_outputs, shape=(DECODER_MAX_PARENTS,), replace=True
+                )
+            )(wire_keys)
+        )  # (K, 16) numpy int32
 
         # ── Decoder nodes ─────────────────────────────────────────────────────
         dec_keys = jax.random.split(key_dec, k_nodes)

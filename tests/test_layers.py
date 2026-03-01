@@ -27,42 +27,48 @@ def key():
 class TestEncoderLayer:
 
     def test_output_shape_all_active(self, key):
-        """N=2 active inputs -> (2, 64, 8, 8), both flags True."""
+        """N=2 active inputs -> (128, 8, 8) and 128 True flags."""
         layer = EncoderLayer(n_inputs=2, key=key)
         xs    = jnp.ones((2, 1, 8, 8))
         flags = jnp.array([True, True])
 
         out, acts = layer(xs, flags)
 
-        assert out.shape == (2, 64, 8, 8)
+        assert out.shape == (128, 8, 8)
+        assert acts.shape == (128,)
         assert bool(jnp.all(acts))
 
     def test_output_shape_all_inactive(self, key):
-        """All inactive inputs -> zero outputs, all flags False."""
+        """All inactive -> (128, 8, 8) zeros, all 128 flags False."""
         layer = EncoderLayer(n_inputs=2, key=key)
         xs    = jnp.ones((2, 1, 8, 8))
         flags = jnp.array([False, False])
 
         out, acts = layer(xs, flags)
 
-        assert out.shape == (2, 64, 8, 8)
+        assert out.shape == (128, 8, 8)
+        assert acts.shape == (128,)
         assert bool(jnp.all(~acts))
         assert bool(jnp.all(out == 0.0))
 
     def test_mixed_active_flags(self, key):
-        """Only the inactive stack returns zeros; active stacks produce real output."""
+        """Mixed flags: inactive stack channels are zeros; flags reflect stack activity."""
         layer = EncoderLayer(n_inputs=3, key=key)
         xs    = jnp.ones((3, 1, 8, 8))
         flags = jnp.array([True, False, True])
 
         out, acts = layer(xs, flags)
 
-        assert out.shape == (3, 64, 8, 8)
-        assert bool(acts[0])
-        assert not bool(acts[1])
-        assert bool(acts[2])
-        # Inactive stack must be all zeros
-        assert bool(jnp.all(out[1] == 0.0))
+        # (3*64, 8, 8) = (192, 8, 8)
+        assert out.shape == (192, 8, 8)
+        assert acts.shape == (192,)
+        # First 64 channels: stack 0 active
+        assert bool(jnp.all(acts[:64]))
+        # Channels 64-127: stack 1 inactive
+        assert bool(jnp.all(~acts[64:128]))
+        assert bool(jnp.all(out[64:128] == 0.0))
+        # Last 64 channels: stack 2 active
+        assert bool(jnp.all(acts[128:]))
 
     def test_jit_compiles(self, key):
         """Layer must compile cleanly under eqx.filter_jit."""
@@ -72,17 +78,19 @@ class TestEncoderLayer:
 
         out, acts = eqx.filter_jit(layer)(xs, flags)
 
-        assert out.shape == (2, 64, 8, 8)
+        assert out.shape == (128, 8, 8)
+        assert acts.shape == (128,)
 
     def test_larger_n_inputs(self, key):
-        """Scale test: N=5 inputs, spatial size 16x16."""
+        """Scale test: N=5 inputs, spatial size 16x16 -> (320, 16, 16)."""
         layer = EncoderLayer(n_inputs=5, key=key)
         xs    = jnp.ones((5, 1, 16, 16))
         flags = jnp.ones((5,), dtype=bool)
 
         out, acts = layer(xs, flags)
 
-        assert out.shape == (5, 64, 16, 16)
+        assert out.shape == (320, 16, 16)
+        assert acts.shape == (320,)
         assert bool(jnp.all(acts))
 
 
