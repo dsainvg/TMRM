@@ -26,6 +26,15 @@ from .fc import (
 	FC_DEFAULT_ACTIVATION,
 )
 
+from .model import (
+	ProblemConfig,
+	ModelConfig,
+)
+
+from .training import (
+	TrainingConfig,
+)
+
 __all__ = [
 	# Encoder node
 	"ENCODER_IN_CHANNELS",
@@ -47,5 +56,10 @@ __all__ = [
 	"ENCODER_STACK_OUT_CHANNELS",
 	# FCLayer
 	"FC_DEFAULT_ACTIVATION",
+	# Model config
+	"ProblemConfig",
+	"ModelConfig",
+	# Training config
+	"TrainingConfig",
 ]
 
