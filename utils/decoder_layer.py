@@ -4,26 +4,24 @@ import jax.numpy as jnp
 import equinox as eqx
 
 from utils.decoder import Decoder
-from utils.config.decode import DECODER_MAX_PARENTS
 
 
 class DecoderLayer(eqx.Module):
     """
     Decoder Layer: K independent Decoder nodes connected to the previous layer
-    via a static adjacency wiring array.
+    via a pre-computed static adjacency wiring array.
 
-    At init time, each of the K Decoder nodes is randomly assigned
-    DECODER_MAX_PARENTS (16) parent indices sampled (with replacement) from
-    the M outputs of the previous layer.  This parent_indices array is
-    fixed for the lifetime of the model — it is a static JAX constant baked
-    in as a pytree leaf.
+    The caller (e.g. DecoderCluster) is responsible for computing parent_indices
+    using the constrained Gaussian fan-out wiring algorithm described in the
+    architecture spec.  This layer simply stores the wiring and executes the K
+    decoders in parallel.
 
     Call signature:
-        prev_outputs: (M, n, n)  — previous layer's output matrices
-        prev_is_active: (M,)     — previous layer's activity flags (bool)
+        prev_outputs:   (M, n, n) — previous layer's output matrices
+        prev_is_active: (M,)      — previous layer's activity flags (bool)
 
     Returns:
-        out:        (K, 1, n, n)
+        out:        (K, n, n)
         out_active: (K,) bool
 
     The Decoder's own threshold gate (>= 12/16 active parents) governs
@@ -35,30 +33,21 @@ class DecoderLayer(eqx.Module):
     # Adjacency: (K, 16) int32 — which prev-layer outputs feed each decoder.
     # Stored as a NumPy array so Equinox treats it as static pytree structure
     # (not a traced JAX leaf).  XLA therefore sees the exact gather indices as
-    # compile-time literals and can constant-fold through the gather — no
-    # eqx.field(static=True) required, no warning produced.
+    # compile-time literals and can constant-fold through the gather.
     parent_indices: np.ndarray
 
-    def __init__(self, k_nodes: int, n_prev_outputs: int, key: jax.Array):
-        key_dec, key_wire = jax.random.split(key)
-
-        # ── Wiring ────────────────────────────────────────────────────────────
-        # Each decoder randomly selects DECODER_MAX_PARENTS indices (with
-        # replacement) from n_prev_outputs available parent slots.
-        # replace=True means no constraint on n_prev_outputs size.
-        wire_keys = jax.random.split(key_wire, k_nodes)
-        # Compute wiring with JAX then immediately materialise as NumPy so the
-        # array is stored as static pytree metadata (compile-time constant).
-        self.parent_indices = np.array(
-            jax.vmap(
-                lambda k: jax.random.choice(
-                    k, n_prev_outputs, shape=(DECODER_MAX_PARENTS,), replace=True
-                )
-            )(wire_keys)
-        )  # (K, 16) numpy int32
+    def __init__(self, parent_indices: np.ndarray, key: jax.Array):
+        """
+        parent_indices : (K, 16) int32 numpy array — pre-computed wiring.
+                         K (number of decoder nodes) is inferred from axis 0.
+        key            : JAX PRNG key for weight initialisation.
+        """
+        # Ensure stored as numpy int32 (compile-time constant for XLA)
+        self.parent_indices = np.asarray(parent_indices, dtype=np.int32)
+        k_nodes = self.parent_indices.shape[0]
 
         # ── Decoder nodes ─────────────────────────────────────────────────────
-        dec_keys = jax.random.split(key_dec, k_nodes)
+        dec_keys = jax.random.split(key, k_nodes)
         self.decoders = eqx.filter_vmap(lambda k: Decoder(k))(dec_keys)
 
     def __call__(self, prev_outputs: jax.Array, prev_is_active: jax.Array):
@@ -67,7 +56,7 @@ class DecoderLayer(eqx.Module):
         prev_is_active: (M,)       — previous layer active flags (bool)
 
         Returns:
-            out:        (K, 1, n, n)
+            out:        (K, n, n)   — Decoder squeezes the channel dim, vmap stacks K results
             out_active: (K,) bool
         """
         # Gather parent inputs and flags for each decoder via static adjacency.

@@ -1,3 +1,4 @@
+import math
 import jax
 import jax.numpy as jnp
 import equinox as eqx
@@ -22,6 +23,13 @@ class Encoder(eqx.Module):
     out_channels: int = eqx.field(static=True)
 
     def __init__(self, key, in_channels: int = ENCODER_IN_CHANNELS, out_channels: int = ENCODER_OUT_CHANNELS):
+        # Validate that ENCODER_INTERMEDIATE_CHANNELS matches the expected derivation:
+        # EXPAND channels + C(EXPAND, 2) pairwise products = intermediate width.
+        _expected_intermediate = ENCODER_EXPAND_CHANNELS + math.comb(ENCODER_EXPAND_CHANNELS, 2)
+        assert ENCODER_INTERMEDIATE_CHANNELS == _expected_intermediate, (
+            f"Config invariant broken: ENCODER_INTERMEDIATE_CHANNELS={ENCODER_INTERMEDIATE_CHANNELS} "
+            f"!= {ENCODER_EXPAND_CHANNELS} + C({ENCODER_EXPAND_CHANNELS},2) = {_expected_intermediate}"
+        )
         keys = jax.random.split(key, 2)
         # in_channels-to-4 expansion
         self.conv1 = eqx.nn.Conv2d(in_channels=in_channels, out_channels=ENCODER_EXPAND_CHANNELS, kernel_size=1, key=keys[0])
@@ -31,7 +39,9 @@ class Encoder(eqx.Module):
 
     def __call__(self, x, is_active):
         """
-        x: (1, n, n) single-channel input
+        x: (1, n, n) single-channel input.  Spatial dims MUST be square (n == n);
+           the pairwise batched matmul contracts the inner spatial dimension and
+           requires n == m.
         is_active: strict scalar boolean determining execution
         """
         def _active_path(operand):

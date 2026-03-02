@@ -47,7 +47,7 @@ def test_decoder_active_path():
     
     out, out_active = decoder(x, is_active_flags)
     
-    assert out.shape == (1, n, n), f"Expected shape (1, {n}, {n}), got {out.shape}"
+    assert out.shape == (n, n), f"Expected shape ({n}, {n}), got {out.shape}"
     assert out_active == True
 
 def test_decoder_inactive_path():
@@ -62,7 +62,7 @@ def test_decoder_inactive_path():
     
     out, out_active = decoder(x, is_active_flags)
     
-    assert out.shape == (1, n, n), f"Expected shape (1, {n}, {n}), got {out.shape}"
+    assert out.shape == (n, n), f"Expected shape ({n}, {n}), got {out.shape}"
     assert out_active == False
     assert jnp.all(out == 0.0), "Inactive decoder output must be entirely zeros."
 
@@ -79,5 +79,60 @@ def test_decoder_jit_compilation():
     flags = jnp.array([True]*14 + [False]*2)
     
     out, out_active = run_decoder(x, flags)
-    assert out.shape == (1, n, n)
+    assert out.shape == (n, n)
     assert out_active == True
+
+
+# ─── Encoder node — tree branch behaviour ────────────────────────────────────
+
+def test_encoder_nonzero_active_output():
+    """Active path with a non-trivial input must produce a non-zero output."""
+    key = jax.random.PRNGKey(5)
+    encoder = Encoder(key)
+    n = 8
+    x = jax.random.normal(key, (1, n, n))
+    out, out_active = encoder(x, jnp.array(True))
+    assert bool(jnp.any(out != 0.0))
+
+def test_encoder_output_shape_custom_channels():
+    """Encoder with in_c=8, out_c=8 (leaf config) returns (8, n, n)."""
+    from utils.config.encode import ENCODER_OUT_CHANNELS
+    key = jax.random.PRNGKey(6)
+    encoder = Encoder(key, in_channels=1, out_channels=ENCODER_OUT_CHANNELS)
+    n = 10
+    x = jax.random.normal(key, (1, n, n))
+    out, active = encoder(x, jnp.array(True))
+    assert out.shape == (ENCODER_OUT_CHANNELS, n, n)
+    assert bool(active)
+
+def test_encoder_deterministic():
+    """Same key + input must give bit-identical output."""
+    key = jax.random.PRNGKey(7)
+    encoder = Encoder(key)
+    n = 6
+    x = jax.random.normal(key, (1, n, n))
+    out1, _ = encoder(x, jnp.array(True))
+    out2, _ = encoder(x, jnp.array(True))
+    assert bool(jnp.allclose(out1, out2))
+
+def test_encoder_different_inputs_differ():
+    """Two distinct inputs produce distinct outputs from the same encoder."""
+    key = jax.random.PRNGKey(8)
+    encoder = Encoder(key)
+    n = 6
+    k1, k2 = jax.random.split(key)
+    x1 = jax.random.normal(k1, (1, n, n))
+    x2 = jax.random.normal(k2, (1, n, n))
+    out1, _ = encoder(x1, jnp.array(True))
+    out2, _ = encoder(x2, jnp.array(True))
+    assert not bool(jnp.allclose(out1, out2))
+
+def test_encoder_zero_input_active():
+    """Zero input through an active encoder: output shape correct, flag True."""
+    key = jax.random.PRNGKey(9)
+    encoder = Encoder(key)
+    n = 8
+    x = jnp.zeros((1, n, n))
+    out, active = encoder(x, jnp.array(True))
+    assert out.shape == (8, n, n)
+    assert bool(active)

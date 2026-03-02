@@ -6,6 +6,7 @@ Tests for the three TMRM layer types:
 """
 
 import pytest
+import numpy as np
 import jax
 import jax.numpy as jnp
 import equinox as eqx
@@ -93,65 +94,145 @@ class TestEncoderLayer:
         assert acts.shape == (320,)
         assert bool(jnp.all(acts))
 
+    # ── Tree-structure-specific tests ────────────────────────────────────────
+
+    def test_tree_stage2_enc_batch_dims(self, key):
+        """stage2_encs must carry a (N, 8) leading batch — not just (N,)."""
+        N = 3
+        layer = EncoderLayer(n_inputs=N, key=key)
+        # Equinox vmaps pytrees: check conv1 weight leading dims are (N, 8, ...)
+        w = layer.stage2_encs.conv1.weight
+        assert w.shape[0] == N,  f"outer vmap dim: expected {N}, got {w.shape[0]}"
+        assert w.shape[1] == 8,  f"inner vmap dim: expected 8 leaves, got {w.shape[1]}"
+
+    def test_tree_nine_nodes_total_per_input(self, key):
+        """Each input has exactly 9 Encoder nodes: 1 root + 8 leaves."""
+        N = 2
+        layer = EncoderLayer(n_inputs=N, key=key)
+        # stage1_encs: (N, ...) — N roots
+        assert layer.stage1_encs.conv1.weight.shape[0] == N
+        # stage2_encs: (N, 8, ...) — N × 8 leaves
+        assert layer.stage2_encs.conv1.weight.shape[0] == N
+        assert layer.stage2_encs.conv1.weight.shape[1] == 8
+
+    def test_tree_per_leaf_flags(self, key):
+        """Active stack produces 8 per-leaf flags, each covering 8 channels."""
+        layer = EncoderLayer(n_inputs=1, key=key)
+        xs    = jnp.ones((1, 1, 8, 8))
+        flags = jnp.array([True])
+
+        out, acts = layer(xs, flags)
+
+        # 1 stack × 64 channels total
+        assert out.shape  == (64, 8, 8)
+        assert acts.shape == (64,)
+        # All 64 flags True (all 8 leaves × 8 channels active)
+        assert bool(jnp.all(acts))
+
+    def test_tree_inactive_root_silences_all_leaves(self, key):
+        """Inactive root flag zeroes all 8 leaves -> 64 zero channels."""
+        layer = EncoderLayer(n_inputs=1, key=key)
+        xs    = jnp.ones((1, 1, 8, 8))
+        flags = jnp.array([False])
+
+        out, acts = layer(xs, flags)
+
+        assert bool(jnp.all(~acts)),          "All 64 leaf flags must be False"
+        assert bool(jnp.all(out == 0.0)),     "All 64 channels must be zero"
+
+    def test_tree_different_inputs_produce_different_outputs(self, key):
+        """Two distinct inputs to the same layer must yield distinct outputs."""
+        layer = EncoderLayer(n_inputs=2, key=key)
+        k1, k2 = jax.random.split(key)
+        xs    = jnp.stack([
+            jax.random.normal(k1, (1, 8, 8)),
+            jax.random.normal(k2, (1, 8, 8)),
+        ])
+        flags = jnp.array([True, True])
+
+        out, _ = layer(xs, flags)
+
+        # First 64 channels vs last 64 channels must differ
+        assert not bool(jnp.allclose(out[:64], out[64:]))
+
+    def test_tree_output_nonzero_for_active_input(self, key):
+        """Active input with non-zero values must produce non-zero output."""
+        layer = EncoderLayer(n_inputs=1, key=key)
+        xs    = jax.random.normal(key, (1, 1, 8, 8))
+        flags = jnp.array([True])
+
+        out, _ = layer(xs, flags)
+
+        assert bool(jnp.any(out != 0.0))
+
 
 # ─── DecoderLayer ────────────────────────────────────────────────────────────
 
 class TestDecoderLayer:
 
+    def _make_layer(self, k, n_prev, key):
+        """Helper: build a DecoderLayer with a simple sequential parent_indices."""
+        # Tile prev indices to fill k*16 slots, then reshape
+        total = k * 16
+        pool  = np.tile(np.arange(n_prev, dtype=np.int32),
+                        int(np.ceil(total / n_prev)))[:total]
+        pi = pool.reshape(k, 16)
+        return DecoderLayer(parent_indices=pi, key=key)
+
     def test_output_shape_all_active(self, key):
         """All 16 prev outputs active -> all K decoders should activate (sum=16>=12)."""
-        layer      = DecoderLayer(k_nodes=4, n_prev_outputs=16, key=key)
+        layer      = self._make_layer(4, 16, key)
         prev_out   = jnp.ones((16, 8, 8))
         prev_flags = jnp.ones((16,), dtype=bool)
 
         out, acts = layer(prev_out, prev_flags)
 
-        assert out.shape == (4, 1, 8, 8)
+        assert out.shape == (4, 8, 8)
         assert bool(jnp.all(acts))
 
     def test_output_shape_all_inactive(self, key):
         """No active prev outputs -> all decoders inactive, outputs are zeros."""
-        layer      = DecoderLayer(k_nodes=4, n_prev_outputs=16, key=key)
+        layer      = self._make_layer(4, 16, key)
         prev_out   = jnp.ones((16, 8, 8))
         prev_flags = jnp.zeros((16,), dtype=bool)
 
         out, acts = layer(prev_out, prev_flags)
 
-        assert out.shape == (4, 1, 8, 8)
+        assert out.shape == (4, 8, 8)
         assert bool(jnp.all(~acts))
         assert bool(jnp.all(out == 0.0))
 
     def test_parent_indices_shape(self, key):
         """Adjacency array must be (K, 16)."""
-        layer = DecoderLayer(k_nodes=6, n_prev_outputs=20, key=key)
+        layer = self._make_layer(6, 20, key)
         assert layer.parent_indices.shape == (6, 16)
 
     def test_parent_indices_in_range(self, key):
         """All wired parent indices must be valid prev-layer indices."""
         n_prev = 10
-        layer  = DecoderLayer(k_nodes=4, n_prev_outputs=n_prev, key=key)
+        layer  = self._make_layer(4, n_prev, key)
         assert bool(jnp.all(layer.parent_indices >= 0))
         assert bool(jnp.all(layer.parent_indices < n_prev))
 
     def test_jit_compiles(self, key):
         """Layer must compile cleanly under eqx.filter_jit."""
-        layer      = DecoderLayer(k_nodes=4, n_prev_outputs=16, key=key)
+        layer      = self._make_layer(4, 16, key)
         prev_out   = jnp.ones((16, 8, 8))
         prev_flags = jnp.ones((16,), dtype=bool)
 
         out, acts = eqx.filter_jit(layer)(prev_out, prev_flags)
 
-        assert out.shape == (4, 1, 8, 8)
+        assert out.shape == (4, 8, 8)
 
     def test_larger_k_nodes(self, key):
         """Scale test: K=8, M=24 prev outputs, spatial 12x12."""
-        layer      = DecoderLayer(k_nodes=8, n_prev_outputs=24, key=key)
+        layer      = self._make_layer(8, 24, key)
         prev_out   = jnp.ones((24, 12, 12))
         prev_flags = jnp.ones((24,), dtype=bool)
 
         out, acts = layer(prev_out, prev_flags)
 
-        assert out.shape == (8, 1, 12, 12)
+        assert out.shape == (8, 12, 12)
 
 
 # ─── FCLayer ─────────────────────────────────────────────────────────────────

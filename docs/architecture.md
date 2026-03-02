@@ -29,16 +29,16 @@ Wiring the Connections: The generated output connections from $L-1$ are randomly
 
 Acyclicity Guarantee: Because connections are strictly drawn from layer $L-1$ (or earlier) and terminate only in layer $L$ (or later), it is mathematically impossible for a cyclic loop to form. The graph remains a strict DAG.
 
-2. The Input Adapters (Stacked Encoders)
+2. The Input Adapters (Tree Encoders)
 
 The entry point of the network consists of dedicated, fixed sets of Input Encoders.
-Based on the architectural constraints, Encoders are not single, shallow transformations. They are designed as 2-layer stacked blocks.
+Each input is processed through a **1-to-8 branching tree** of 9 Encoder nodes — not a simple sequential stack.
 
-Expansion: An individual input (e.g., an $n \times n$ feature map) is processed through these two stacked encoder layers, expanding significantly.
+Tree Structure: One root Encoder node takes the raw `(1, n, n)` single-channel input and produces `(8, n, n)`. Each of those 8 output channels is then peeled off and fed independently to its own dedicated leaf Encoder node. Each leaf also produces `(8, n, n)`. The 8 leaf outputs are concatenated to form `(64, n, n)` — 64 distinct $n \times n$ feature maps per input.
 
-The 64-Output Manifold: Through the pairwise matrix multiplication mechanics described in the core specification, the stacked encoder block ultimately produces a dense manifold of 64 distinct $n \times n$ feature maps (often conceptually grouped as an $8 \times 8$ grid of channels).
+The 64-Output Manifold: The tree structure means every input produces exactly **64 feature maps** — 8 leaves × 8 channels each — from 9 total Encoder nodes (1 root + 8 leaves). All pairwise matrix product interactions happen independently within each node via the $\binom{4}{2} = 6$ pair mechanism.
 
-Identity Preservation: These 64 outputs are then pushed into the dynamically generated Decoder graph. If an input type is not supplied by the user/dataset, its specific stacked encoder is deactivated, bypassing computation and outputting zero-tensors.
+Identity Preservation: These 64 outputs are then pushed into the dynamically generated Decoder graph. If an input type is not supplied by the user/dataset, its root Encoder is deactivated (`is_active = False`), which propagates to all 8 leaves — all 64 output channels are zeroed, bypassing computation entirely.
 
 3. The Terminal Stage: The Fully Connected (FC) Layer
 
@@ -56,9 +56,9 @@ It scans backwards through the network and collects the outputs of any Decoder n
 
 3.2. Concatenation and Projection
 
-The Concatenation Block: All gathered output tensors (each originally shaped $4 \times n \times n$) are flattened spatially and concatenated along their feature dimension. This forms a massive, single 1D vector representing the entire mixed cross-context state of the active graph.
+The Concatenation Block: All gathered output tensors — each shaped `(n, n)` (a single $n \times n$ matrix, the squeezed scalar-channel output of each Decoder node) — are flattened spatially and concatenated into a single 1D vector. This forms a massive vector representing the entire mixed cross-context state of the active graph.
 
-The Output Head: This massive vector is passed through 1 or 2 Fully Connected (Dense) layers. These layers map the high-dimensional feature vector down to the specific dimensionality required by the problem (e.g., 10 logits for classification, 3 coordinates for bounding boxes).
+The Output Head: This vector is passed through 1 or 2 Fully Connected (Dense) layers. These layers map the high-dimensional feature vector down to the specific dimensionality required by the problem (e.g., 10 logits for classification, 3 coordinates for bounding boxes).
 
 4. Problem Adaptation Strategy
 
@@ -88,8 +88,12 @@ Example - Multi-Agent RL: The final stage might be split into two separate FC la
 
 Because the internal graph is randomized and uses the Top-K determinant selection, the network acts as an immense, untrained hash function of features initially.
 
-During training via backpropagation (using jax.grad), the network learns which of the 64 encoder outputs are most useful.
+**Gradient routing — Decoder/FC head:** During training via backpropagation (`eqx.filter_value_and_grad`), gradients flow from the task loss backward through the FC layer into the DecoderCluster, updating each Decoder's `conv1` and `conv2` weights normally.
 
-The gradients naturally flow back only through the active, Top-8 routing paths.
+**Gradient barrier at the Decoder gate:** The `jax.lax.cond` threshold gate combined with the `slogdet`-based Top-12 sorting creates a gradient barrier between the DecoderCluster and the Encoder weights. Gradients from a downstream task loss do **not** flow back to update Encoder `conv1`/`conv2` weights through the cluster — `lax.cond` stops the VJP at the gate boundary.
 
-To adapt the network to a highly complex problem, you merely increase the initialization boundaries (e.g., higher $\mu$ for Gaussian connections, triggering a wider graph) and allow the backpropagation to find the optimal sub-routings.
+**Separate encoder training:** Encoders are trained using a dedicated encoder-level loss (applied directly to the `EncoderLayer` output), independently of the decoder/FC head loss. This two-stage training strategy — encoder loss + task loss — is the intended paradigm for the full network.
+
+**Sparse gradient routing:** Because inactive Decoder nodes return zero tensors (zero gradients), only the currently active sub-graph participates in weight updates on any given training step. Sparse activation therefore acts as an implicit regulariser.
+
+To adapt the network to a highly complex problem, you merely increase the initialization boundaries (e.g., higher $\mu$ for Gaussian connections, triggering a wider graph) and train the two stages (encoder loss + decoder/FC task loss) with their respective objectives.
