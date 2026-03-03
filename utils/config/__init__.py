@@ -1,11 +1,12 @@
-from .encode import (
+from .trainparams import (
 	ENCODER_IN_CHANNELS,
 	ENCODER_EXPAND_CHANNELS,
 	ENCODER_INTERMEDIATE_CHANNELS,
 	ENCODER_OUT_CHANNELS,
-)
-
-from .decode import (
+	ENCODER_STACK_DEPTH,
+	ENCODER_INTER_STACK_CHANNELS,
+	ENCODER_STAGE2_COUNT,
+	ENCODER_STACK_OUT_CHANNELS,
 	DECODER_MAX_PARENTS,
 	DECODER_ACTIVATION_THRESHOLD,
 	DECODER_TOP_K_EXTRACT,
@@ -14,15 +15,6 @@ from .decode import (
 	DECODER_INTERMEDIATE_CHANNELS,
 	DECODER_HIDDEN_CHANNELS,
 	DECODER_OUT_CHANNELS,
-)
-
-from .encoder_layer import (
-	ENCODER_STACK_DEPTH,
-	ENCODER_INTER_STACK_CHANNELS,
-	ENCODER_STACK_OUT_CHANNELS,
-)
-
-from .fc import (
 	FC_DEFAULT_ACTIVATION,
 )
 
@@ -37,7 +29,12 @@ from .training import (
 
 from .data import (
 	DataConfig,
+)
+
+from .trainparams import (
+	TRAIN_CFG,
 	DATA_CFG,
+	MODEL_CFG,
 )
 
 __all__ = [
@@ -69,5 +66,8 @@ __all__ = [
 	# Data / task config
 	"DataConfig",
 	"DATA_CFG",
+	# Active run instances (from trainparams)
+	"TRAIN_CFG",
+	"MODEL_CFG",
 ]
 

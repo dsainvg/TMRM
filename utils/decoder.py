@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 
-from utils.config.decode import (
+from utils.config.trainparams import (
     DECODER_MAX_PARENTS,
     DECODER_ACTIVATION_THRESHOLD,
     DECODER_TOP_K_EXTRACT,
@@ -12,7 +12,7 @@ from utils.config.decode import (
     DECODER_PRESERVE_RANKS,
     DECODER_INTERMEDIATE_CHANNELS,
     DECODER_HIDDEN_CHANNELS,
-    DECODER_OUT_CHANNELS
+    DECODER_OUT_CHANNELS,
 )
 
 class Decoder(eqx.Module):

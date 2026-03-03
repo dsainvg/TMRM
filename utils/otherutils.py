@@ -15,8 +15,9 @@ import equinox as eqx
 import optax
 
 from model import Model
-from utils.config.model import ModelConfig, ProblemConfig
-from utils.config.data import DataConfig, DATA_CFG
+from utils.config.model import ModelConfig
+from utils.config.data import DataConfig
+from utils.config.trainparams import DATA_CFG, MODEL_CFG
 from utils.config.training import TrainingConfig
 
 
@@ -24,7 +25,7 @@ from utils.config.training import TrainingConfig
 
 def download_dataset(cfg: DataConfig = DATA_CFG) -> None:
     """Download the dataset .npz if not already present on disk."""
-    cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    cfg.data_dir_path.mkdir(parents=True, exist_ok=True)
     if cfg.dataset_path.exists():
         print(f"[data] Dataset already present at {cfg.dataset_path}")
         return
@@ -114,21 +115,8 @@ def load_data(cfg: DataConfig = DATA_CFG):
 
 # ── 3. Model construction ─────────────────────────────────────────────────────
 
-def build_model(key: jax.Array, cfg: DataConfig = DATA_CFG) -> Model:
-    """Construct the TMRM model for the given task configuration."""
-    model_cfg = ModelConfig(
-        n=cfg.n,
-        n_encoders=cfg.n_channels_in,
-        n_decoder_layers=2,
-        max_decoder_nodes=20,
-        problems=(
-            ProblemConfig(
-                n_encoders_used=cfg.n_channels_in,
-                fc_out_features=cfg.fc_out,
-                fc_activation="sigmoid",
-            ),
-        ),
-    )
+def build_model(key: jax.Array, model_cfg: ModelConfig = MODEL_CFG) -> Model:
+    """Construct the TMRM model from a ModelConfig."""
     return Model(model_cfg, key=key)
 
 

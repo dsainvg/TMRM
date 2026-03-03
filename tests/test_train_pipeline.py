@@ -33,7 +33,8 @@ import optax
 import pytest
 
 # ── Imports under test ────────────────────────────────────────────────────────
-from utils.config.data import DataConfig, DATA_CFG
+from utils.config.data import DataConfig
+from utils.config.trainparams import DATA_CFG, MODEL_CFG
 from utils.config.training import TrainingConfig
 from utils.otherutils import (
     download_dataset,
@@ -69,7 +70,7 @@ def real_dataset():
 @pytest.fixture(scope="module")
 def base_model():
     """Build a fresh TMRM model (shared across tests in this module)."""
-    return build_model(_KEY, DATA_CFG)
+    return build_model(_KEY, MODEL_CFG)
 
 
 @pytest.fixture(scope="module")
@@ -365,15 +366,15 @@ class TestBuildModel:
         assert isinstance(params["total"], int)
 
     def test_different_keys_give_different_models(self):
-        m1 = build_model(jax.random.key(0), DATA_CFG)
-        m2 = build_model(jax.random.key(99), DATA_CFG)
+        m1 = build_model(jax.random.key(0), MODEL_CFG)
+        m2 = build_model(jax.random.key(99), MODEL_CFG)
         xs = jnp.ones((N_IN, 1, N_GRID, N_GRID))
         out1 = m1(0, xs)
         out2 = m2(0, xs)
         assert not jnp.allclose(out1, out2)
 
     def test_forward_deterministic_same_key(self):
-        m = build_model(jax.random.key(5), DATA_CFG)
+        m = build_model(jax.random.key(5), MODEL_CFG)
         xs = jnp.ones((N_IN, 1, N_GRID, N_GRID))
         out1 = m(0, xs)
         out2 = m(0, xs)
@@ -579,7 +580,7 @@ class TestEvaluate:
         If model predictions match targets exactly (per-channel argmax),
         cell_acc must be 1.0.
         """
-        model = build_model(jax.random.key(42), DATA_CFG)
+        model = build_model(jax.random.key(42), MODEL_CFG)
 
         rng = np.random.default_rng(10)
         puzzles = rng.integers(0, N_IN, size=(5, N_GRID, N_GRID))
@@ -684,7 +685,7 @@ class TestLossConvergence:
         Over 20 gradient steps on a fixed batch the loss should have a
         downward trend (first > last, or at minimum some improvement).
         """
-        model = build_model(jax.random.key(11), DATA_CFG)
+        model = build_model(jax.random.key(11), MODEL_CFG)
         cfg   = TrainingConfig(optimiser="adam", lr_schedule="constant",
                                learning_rate=3e-4, grad_clip_norm=1.0)
         tx, opt_state = build_optimiser(cfg, model)
@@ -702,7 +703,7 @@ class TestLossConvergence:
         )
 
     def test_loss_all_finite_over_30_steps(self, synth_batch):
-        model = build_model(jax.random.key(22), DATA_CFG)
+        model = build_model(jax.random.key(22), MODEL_CFG)
         cfg   = TrainingConfig(optimiser="adam", lr_schedule="constant",
                                learning_rate=1e-3, grad_clip_norm=1.0)
         tx, opt_state = build_optimiser(cfg, model)
@@ -713,7 +714,7 @@ class TestLossConvergence:
 
     @pytest.mark.parametrize("lr", [1e-4, 3e-4, 1e-3])
     def test_loss_finite_for_lr_range(self, synth_batch, lr):
-        model = build_model(jax.random.key(33), DATA_CFG)
+        model = build_model(jax.random.key(33), MODEL_CFG)
         cfg   = TrainingConfig(optimiser="adam", lr_schedule="constant",
                                learning_rate=lr, grad_clip_norm=1.0)
         tx, opt_state = build_optimiser(cfg, model)
@@ -731,7 +732,7 @@ class TestOptimiserVariants:
 
     @pytest.mark.parametrize("opt", _OPTIMISERS)
     def test_one_epoch_loss_finite(self, opt, synth_batch):
-        model = build_model(jax.random.key(44), DATA_CFG)
+        model = build_model(jax.random.key(44), MODEL_CFG)
         cfg   = TrainingConfig(optimiser=opt, lr_schedule="constant",
                                learning_rate=1e-3, grad_clip_norm=1.0)
         tx, opt_state = build_optimiser(cfg, model)
@@ -763,7 +764,7 @@ class TestLRScheduleVariants:
 
     @pytest.mark.parametrize("sched", _SCHEDULES)
     def test_schedule_loss_finite_after_5_steps(self, sched, synth_batch):
-        model = build_model(jax.random.key(55), DATA_CFG)
+        model = build_model(jax.random.key(55), MODEL_CFG)
         cfg   = TrainingConfig(optimiser="adam", lr_schedule=sched,
                                learning_rate=3e-4, warmup_steps=20,
                                grad_clip_norm=1.0)
@@ -775,7 +776,7 @@ class TestLRScheduleVariants:
 
     @pytest.mark.parametrize("sched", _SCHEDULES)
     def test_schedule_model_params_finite_after_5_steps(self, sched, synth_batch):
-        model = build_model(jax.random.key(66), DATA_CFG)
+        model = build_model(jax.random.key(66), MODEL_CFG)
         cfg   = TrainingConfig(optimiser="adam", lr_schedule=sched,
                                learning_rate=3e-4, warmup_steps=20,
                                grad_clip_norm=1.0)
@@ -924,7 +925,7 @@ class TestTrainPipeline:
 
         cfg = DataConfig(checkpoint_dir=tmp_path / "ckpts_conv")
         # Evaluate random model baseline
-        model_init = build_model(jax.random.key(99), DATA_CFG)
+        model_init = build_model(jax.random.key(99), MODEL_CFG)
         _, _, X_val, Y_val = real_dataset
         init_metrics = evaluate(model_init, X_val[:50], Y_val[:50], DATA_CFG)
         init_loss = init_metrics["loss"]

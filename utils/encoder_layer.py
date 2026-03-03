@@ -3,8 +3,9 @@ import jax.numpy as jnp
 import equinox as eqx
 
 from utils.encoder import Encoder
-from utils.config.encode import ENCODER_IN_CHANNELS, ENCODER_OUT_CHANNELS
-from utils.config.encoder_layer import (
+from utils.config.trainparams import (
+    ENCODER_IN_CHANNELS,
+    ENCODER_OUT_CHANNELS,
     ENCODER_INTER_STACK_CHANNELS,
     ENCODER_STAGE2_COUNT,
     ENCODER_STACK_OUT_CHANNELS,

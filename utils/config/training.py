@@ -47,8 +47,8 @@ class TrainingConfig:
     seed : int
         Base PRNG seed for the training run (data shuffling, etc.).
     """
-    batch_size: int = 1
-    n_epochs: int = 50
+    batch_size: int = 32
+    n_epochs: int = 10
     learning_rate: float = 3e-4
     optimiser: str = 'adam'
     weight_decay: float = 0.0

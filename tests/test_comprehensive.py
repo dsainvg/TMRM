@@ -30,13 +30,13 @@ from utils.decoder_cluster import (
     _terminal_wire,
 )
 from utils.fc_layer import FCLayer
-from utils.config.decode import (
+from utils.config.trainparams import (
     DECODER_MAX_PARENTS,
     DECODER_ACTIVATION_THRESHOLD,
     DECODER_TOP_K_EXTRACT,
     DECODER_INTERACT_RANKS,
+    ENCODER_OUT_CHANNELS,
 )
-from utils.config.encode import ENCODER_OUT_CHANNELS
 
 
 # ─── Shared fixtures ──────────────────────────────────────────────────────────

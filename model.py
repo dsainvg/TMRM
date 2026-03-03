@@ -34,7 +34,7 @@ from utils.encoder_layer import EncoderLayer
 from utils.decoder_cluster import DecoderCluster
 from utils.fc_layer import FCLayer
 from utils.config.model import ModelConfig
-from utils.config.encoder_layer import ENCODER_STACK_OUT_CHANNELS
+from utils.config.trainparams import ENCODER_STACK_OUT_CHANNELS
 
 
 class Model(eqx.Module):

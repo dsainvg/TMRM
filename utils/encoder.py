@@ -3,11 +3,11 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 
-from utils.config.encode import (
-    ENCODER_IN_CHANNELS, 
-    ENCODER_EXPAND_CHANNELS, 
-    ENCODER_INTERMEDIATE_CHANNELS, 
-    ENCODER_OUT_CHANNELS
+from utils.config.trainparams import (
+    ENCODER_IN_CHANNELS,
+    ENCODER_EXPAND_CHANNELS,
+    ENCODER_INTERMEDIATE_CHANNELS,
+    ENCODER_OUT_CHANNELS,
 )
 
 class Encoder(eqx.Module):

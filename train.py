@@ -19,8 +19,8 @@ import jax.numpy as jnp
 import equinox as eqx
 
 from model import Model
-from utils.config.data import DATA_CFG
 from utils.config.training import TrainingConfig
+from utils.config.trainparams import TRAIN_CFG, DATA_CFG, MODEL_CFG
 from utils.otherutils import (
     download_dataset,
     load_data,
@@ -77,17 +77,9 @@ def train_step(
 # ── Training loop ─────────────────────────────────────────────────────────────
 
 def train(
-    train_cfg: TrainingConfig = TrainingConfig(
-        batch_size=512,
-        n_epochs=300,
-        learning_rate=3e-4,
-        optimiser="adam",
-        lr_schedule="constant",
-        grad_clip_norm=2.0,
-        log_every=50,
-        seed=4,
-    ),
+    train_cfg: TrainingConfig = TRAIN_CFG,
     data_cfg=DATA_CFG,
+    model_cfg=MODEL_CFG,
 ):
     print("=" * 60)
     print("TMRM — 4×4 Sudoku Training")
@@ -101,7 +93,7 @@ def train(
 
     # ── Model ─────────────────────────────────────────────────────────
     key   = jax.random.key(train_cfg.seed)
-    model = build_model(key, data_cfg)
+    model = build_model(key, model_cfg)
     params = model.count_params()
     print(f"[model] Total params: {params['total']:,}")
 
@@ -109,7 +101,7 @@ def train(
     tx, opt_state = build_optimiser(train_cfg, model)
 
     # ── Checkpoint dir ────────────────────────────────────────────────
-    data_cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    data_cfg.checkpoint_dir_path.mkdir(parents=True, exist_ok=True)
 
     # ── Training ──────────────────────────────────────────────────────
     rng = np.random.default_rng(train_cfg.seed)
@@ -156,13 +148,13 @@ def train(
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            ckpt_path     = data_cfg.checkpoint_dir / "best_model.eqx"
+            ckpt_path     = data_cfg.checkpoint_dir_path / "best_model.eqx"
             eqx.tree_serialise_leaves(str(ckpt_path), model)
             print(f"  ✓ Checkpoint saved → {ckpt_path}  (val_loss={val_loss:.4f})")
 
     print("=" * 60)
     print(f"Training complete.  Best val_loss: {best_val_loss:.4f}")
-    print(f"Best model saved at: {data_cfg.checkpoint_dir / 'best_model.eqx'}")
+    print(f"Best model saved at: {data_cfg.checkpoint_dir_path / 'best_model.eqx'}")
     return model
 
 

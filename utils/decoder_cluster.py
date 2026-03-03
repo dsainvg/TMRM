@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import equinox as eqx
 
 from utils.decoder_layer import DecoderLayer
-from utils.config.decode import (
+from utils.config.trainparams import (
     DECODER_MAX_PARENTS,
     FANOUT_FIRST_MU, FANOUT_FIRST_SIGMA, FANOUT_FIRST_LO, FANOUT_FIRST_HI,
     FANOUT_SECOND_MU, FANOUT_SECOND_SIGMA, FANOUT_SECOND_LO, FANOUT_SECOND_HI,

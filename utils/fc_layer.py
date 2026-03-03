@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 
-from utils.config.fc import FC_DEFAULT_ACTIVATION
+from utils.config.trainparams import FC_DEFAULT_ACTIVATION
 
 
 # Static dispatch table — resolved once at import time, never traced by JAX.
