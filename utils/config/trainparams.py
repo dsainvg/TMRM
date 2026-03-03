@@ -7,14 +7,14 @@ automatically.
 """
 
 # ── Training hyperparameters ─────────────────────────────────────────────────
-BATCH_SIZE     = 32
+BATCH_SIZE     = 128
 N_EPOCHS       = 300
-LEARNING_RATE  = 3e-4
+LEARNING_RATE  = 3e-3
 OPTIMISER      = "adam"
 LR_SCHEDULE    = "constant"
-GRAD_CLIP_NORM = 2.0
-LOG_EVERY      = 50
-SEED           = 41
+GRAD_CLIP_NORM = 0.99
+LOG_EVERY      = 10
+SEED           = 42
 
 # ── Task / data dimensionality ───────────────────────────────────────────────
 N              = 9    # grid size (N×N cells)
@@ -28,8 +28,8 @@ DATASET_FILENAME = "dataset_9x9.npz"
 CHECKPOINT_DIR   = "checkpoints"
 
 # ── Model architecture ───────────────────────────────────────────────────────
-N_DECODER_LAYERS  = 12
-MAX_DECODER_NODES = 500
+N_DECODER_LAYERS  = 8
+MAX_DECODER_NODES = 150
 FC_ACTIVATION     = "sigmoid"   # output activation for the FC head
 
 # ── Encoder node ─────────────────────────────────────────────────────────────
