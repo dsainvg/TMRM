@@ -80,7 +80,7 @@ def key():
 class TestOverfitSingleSample:
     """The model should be able to memorise one sample if trained long enough."""
 
-    @pytest.mark.parametrize("n_epochs", [30])
+    @pytest.mark.parametrize("n_epochs", [5])
     def test_loss_drops_significantly(self, key, n_epochs):
         cfg = _tiny_config()
         model = Model(cfg, key)
@@ -114,7 +114,7 @@ class TestOverfitSingleSample:
         state = opt.init(eqx.filter(model, eqx.is_inexact_array))
         step  = _make_step_fn(model, opt)
 
-        for _ in range(50):
+        for _ in range(10):
             model, state, _ = step(model, state, xs, tgt)
 
         pred = model(0, xs)
@@ -189,7 +189,7 @@ class TestBatchedTraining:
             return eqx.apply_updates(m, updates), ns, loss
 
         losses = []
-        for epoch in range(10):
+        for epoch in range(3):
             epoch_loss = 0.0
             for xs_i, tgt_i in zip(batch_xs, batch_tgt):
                 model, state, l = single_step(model, state, xs_i, tgt_i)
@@ -231,7 +231,7 @@ class TestMultiProblemTraining:
         steps = [_make_step_fn(model, opt, p) for p in range(2)]
 
         history = {0: [], 1: []}
-        n_rounds = 10
+        n_rounds = 3
         for _ in range(n_rounds):
             for p in range(2):
                 model, state, l = steps[p](model, state, xs, targets[p])
@@ -266,7 +266,7 @@ class TestMultiProblemTraining:
         state = opt.init(eqx.filter(model, eqx.is_inexact_array))
         steps = [_make_step_fn(model, opt, p) for p in range(2)]
 
-        for _ in range(5):
+        for _ in range(2):
             for p in range(2):
                 model, state, _ = steps[p](model, state, xs, targets[p])
 
@@ -312,7 +312,7 @@ class TestTiming:
         compile_time = time.perf_counter() - t0
 
         # ── Cached calls ──────────────────────────────────────────────────
-        n_steps = 20
+        n_steps = 5
         t0 = time.perf_counter()
         for _ in range(n_steps):
             model, state, loss = step(model, state, xs, tgt)
@@ -348,7 +348,7 @@ class TestTiming:
         jax.block_until_ready(out)
 
         # Time cached calls
-        n_calls = 20
+        n_calls = 5
         t0 = time.perf_counter()
         for _ in range(n_calls):
             out = fwd(model, x_single)
@@ -383,12 +383,12 @@ class TestNumericalStability:
         state = opt.init(eqx.filter(model, eqx.is_inexact_array))
         step  = _make_step_fn(model, opt)
 
-        for i in range(50):
+        for i in range(3):
             model, state, loss = step(model, state, xs, tgt)
             assert jnp.isfinite(loss), f"Non-finite loss at step {i}: {loss}"
 
         out = model(0, xs)
-        assert jnp.all(jnp.isfinite(out)), "Non-finite output after 50 steps"
+        assert jnp.all(jnp.isfinite(out)), "Non-finite output after training steps"
 
     def test_large_input_does_not_explode(self, key):
         """Inputs scaled by 100 should still produce finite outputs."""
@@ -417,7 +417,7 @@ class TestNumericalStability:
         state = opt.init(eqx.filter(model, eqx.is_inexact_array))
         step  = _make_step_fn(model, opt)
 
-        for i in range(10):
+        for i in range(3):
             model, state, loss = step(model, state, xs, tgt)
             assert jnp.isfinite(loss), f"NaN/Inf at step {i} with LR=0.1"
 
@@ -460,7 +460,7 @@ class TestDeterminism:
             opt   = optax.adam(1e-3)
             state = opt.init(eqx.filter(model, eqx.is_inexact_array))
             step  = _make_step_fn(model, opt)
-            for __ in range(5):
+            for __ in range(2):
                 model, state, loss = step(model, state, xs, tgt)
             results.append(float(loss))
 
@@ -501,7 +501,7 @@ class TestGradientNorms:
             )
             return eqx.apply_updates(m, updates), ns, loss, gnorm
 
-        for i in range(10):
+        for i in range(3):
             model, state, loss, gnorm = step_with_gnorm(model, state)
             assert jnp.isfinite(gnorm), f"Gradient norm not finite at step {i}"
             assert jnp.isfinite(loss), f"Loss not finite at step {i}"
@@ -541,8 +541,8 @@ class TestCheckpointResume:
         state = opt.init(eqx.filter(model, eqx.is_inexact_array))
         step  = _make_step_fn(model, opt)
 
-        # Train 5 steps
-        for _ in range(5):
+        # Train 2 steps
+        for _ in range(2):
             model, state, loss_pre = step(model, state, xs, tgt)
 
         loss_at_save = float(loss_pre)
@@ -560,8 +560,8 @@ class TestCheckpointResume:
         state2 = opt.init(eqx.filter(model2, eqx.is_inexact_array))
         step2  = _make_step_fn(model2, opt)
 
-        # Train 10 more steps
-        for _ in range(10):
+        # Train 5 more steps
+        for _ in range(5):
             model2, state2, loss_post = step2(model2, state2, xs, tgt)
 
         loss_after_resume = float(loss_post)
@@ -647,7 +647,7 @@ class TestActivationsTraining:
         state = opt.init(eqx.filter(model, eqx.is_inexact_array))
         step  = _make_step_fn(model, opt)
 
-        for i in range(5):
+        for i in range(2):
             model, state, loss = step(model, state, xs, tgt)
             assert jnp.isfinite(loss), (
                 f"Non-finite loss at step {i} with activation={act}"

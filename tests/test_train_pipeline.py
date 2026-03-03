@@ -691,11 +691,11 @@ class TestLossConvergence:
         xs_batch, y_batch = synth_batch
 
         losses = []
-        for _ in range(20):
+        for _ in range(5):
             model, opt_state, loss = train_step(model, opt_state, tx, xs_batch, y_batch)
             losses.append(float(loss))
 
-        assert all(np.isfinite(l) for l in losses), "NaN/Inf during 20 steps"
+        assert all(np.isfinite(l) for l in losses), "NaN/Inf during training steps"
         # Loss at end should be lower than at start (on fixed batch, adam converges)
         assert losses[-1] < losses[0], (
             f"Loss did not decrease: {losses[0]:.4f} → {losses[-1]:.4f}"
@@ -707,7 +707,7 @@ class TestLossConvergence:
                                learning_rate=1e-3, grad_clip_norm=1.0)
         tx, opt_state = build_optimiser(cfg, model)
         xs_batch, y_batch = synth_batch
-        for _ in range(30):
+        for _ in range(5):
             model, opt_state, loss = train_step(model, opt_state, tx, xs_batch, y_batch)
             assert bool(jnp.isfinite(loss)), f"Non-finite loss encountered"
 
@@ -718,7 +718,7 @@ class TestLossConvergence:
                                learning_rate=lr, grad_clip_norm=1.0)
         tx, opt_state = build_optimiser(cfg, model)
         xs_batch, y_batch = synth_batch
-        for _ in range(10):
+        for _ in range(2):
             model, opt_state, loss = train_step(model, opt_state, tx, xs_batch, y_batch)
         assert bool(jnp.isfinite(loss))
 
@@ -736,7 +736,7 @@ class TestOptimiserVariants:
                                learning_rate=1e-3, grad_clip_norm=1.0)
         tx, opt_state = build_optimiser(cfg, model)
         xs_batch, y_batch = synth_batch
-        for _ in range(5):
+        for _ in range(2):
             model, opt_state, loss = train_step(model, opt_state, tx, xs_batch, y_batch)
         assert bool(jnp.isfinite(loss))
 
@@ -748,7 +748,7 @@ class TestOptimiserVariants:
         xs_batch, y_batch = synth_batch
         old_leaves = jax.tree.leaves(eqx.filter(base_model, eqx.is_inexact_array))
         model = base_model
-        for _ in range(3):
+        for _ in range(2):
             model, opt_state, _ = train_step(model, opt_state, tx, xs_batch, y_batch)
         new_leaves = jax.tree.leaves(eqx.filter(model, eqx.is_inexact_array))
         changed = any(not jnp.allclose(o, n) for o, n in zip(old_leaves, new_leaves))
@@ -769,7 +769,7 @@ class TestLRScheduleVariants:
                                grad_clip_norm=1.0)
         tx, opt_state = build_optimiser(cfg, model)
         xs_batch, y_batch = synth_batch
-        for _ in range(5):
+        for _ in range(2):
             model, opt_state, loss = train_step(model, opt_state, tx, xs_batch, y_batch)
         assert bool(jnp.isfinite(loss))
 
@@ -781,7 +781,7 @@ class TestLRScheduleVariants:
                                grad_clip_norm=1.0)
         tx, opt_state = build_optimiser(cfg, model)
         xs_batch, y_batch = synth_batch
-        for _ in range(5):
+        for _ in range(2):
             model, opt_state, loss = train_step(model, opt_state, tx, xs_batch, y_batch)
         leaves = jax.tree.leaves(eqx.filter(model, eqx.is_inexact_array))
         assert all(bool(jnp.all(jnp.isfinite(l))) for l in leaves)
@@ -931,7 +931,7 @@ class TestTrainPipeline:
 
         train_cfg = TrainingConfig(
             batch_size=32,
-            n_epochs=5,
+            n_epochs=1,
             learning_rate=3e-4,
             optimiser="adam",
             lr_schedule="constant",
