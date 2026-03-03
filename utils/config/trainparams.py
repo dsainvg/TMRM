@@ -7,7 +7,7 @@ automatically.
 """
 
 # ── Training hyperparameters ─────────────────────────────────────────────────
-BATCH_SIZE     = 1024
+BATCH_SIZE     = 128
 N_EPOCHS       = 300
 LEARNING_RATE  = 3e-4
 OPTIMISER      = "adam"
