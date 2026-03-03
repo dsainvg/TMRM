@@ -78,14 +78,14 @@ def train_step(
 
 def train(
     train_cfg: TrainingConfig = TrainingConfig(
-        batch_size=32,
-        n_epochs=30,
+        batch_size=512,
+        n_epochs=300,
         learning_rate=3e-4,
         optimiser="adam",
         lr_schedule="constant",
-        grad_clip_norm=1.0,
+        grad_clip_norm=2.0,
         log_every=50,
-        seed=42,
+        seed=4,
     ),
     data_cfg=DATA_CFG,
 ):
