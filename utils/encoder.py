@@ -42,41 +42,38 @@ class Encoder(eqx.Module):
         x: (1, n, n) single-channel input.  Spatial dims MUST be square (n == n);
            the pairwise batched matmul contracts the inner spatial dimension and
            requires n == m.
-        is_active: strict scalar boolean determining execution
+        is_active: strict scalar boolean determining execution.
+
+        Always computes the active path; the inactive gate is applied via
+        jax.lax.select (jnp.where) which zeroes the result when is_active=False.
+        This makes the call fully vmap-compatible — no lax.cond nested inside
+        vmap — enabling true SIMD-batched training with jax.vmap.
+        Gradients are automatically masked to zero for inactive slots because
+        jnp.where VJP multiplies the upstream gradient by where(is_active,1,0).
         """
-        def _active_path(operand):
-            x_act = operand
-            # Expand to 4 channels
-            x_conv1 = self.conv1(x_act)
-            
-            # Pairwise 4C2 = 6 interactions
-            # Explicit index arrays for Batched MatMul
-            idx1 = jnp.array([0, 0, 0, 1, 1, 2])
-            idx2 = jnp.array([1, 2, 3, 2, 3, 3])
-            
-            left = x_conv1[idx1]   # (6, n, n)
-            right = x_conv1[idx2]  # (6, n, n)
-            
-            # Batched MatMul over pairs
-            pairs = jnp.matmul(left, right)  # (6, n, n)
-            
-            # Form 10-channel intermediate representation
-            concat = jnp.concatenate([x_conv1, pairs], axis=0)  # (10, n, n)
-            
-            # Project down to 8 channels
-            out = self.conv2(concat)  # (8, n, n)
-            return out, jnp.array(True)
-            
-        def _inactive_path(operand):
-            x_inact = operand
-            _, n, m = x_inact.shape
-            # Pre-allocated zero-tensor exactly mimicking the execution output topology
-            return jnp.zeros((self.out_channels, n, m)), jnp.array(False)
-            
-        out, out_active = jax.lax.cond(
-            is_active,
-            _active_path,
-            _inactive_path,
-            x
-        )
-        return out, out_active
+        # ── Active path (always computed) ─────────────────────────────────────
+        # Expand to 4 channels
+        x_conv1 = self.conv1(x)  # (4, n, n)
+
+        # Pairwise 4C2 = 6 interactions — explicit index arrays for Batched MatMul
+        idx1 = jnp.array([0, 0, 0, 1, 1, 2])
+        idx2 = jnp.array([1, 2, 3, 2, 3, 3])
+
+        left  = x_conv1[idx1]  # (6, n, n)
+        right = x_conv1[idx2]  # (6, n, n)
+
+        # Batched MatMul over pairs
+        pairs = jnp.matmul(left, right)  # (6, n, n)
+
+        # Form 10-channel intermediate representation
+        concat = jnp.concatenate([x_conv1, pairs], axis=0)  # (10, n, n)
+
+        # Project down to out_channels
+        active_out = self.conv2(concat)  # (out_channels, n, n)
+
+        # ── Gate: zero-out inactive slots via jax.lax.select (XLA select op) ──
+        # jnp.where with a scalar condition broadcasts over the array and
+        # compiles to a single XLA select — no lax.cond branch, fully vmap-safe.
+        _, n, m = x.shape
+        out = jnp.where(is_active, active_out, jnp.zeros((self.out_channels, n, m)))
+        return out, is_active

@@ -71,41 +71,108 @@ class EncoderLayer(eqx.Module):
         Returns:
             out:        (64*N, n, n)  — all stacks concatenated on axis 0
             out_active: (64*N,) bool  — per-leaf flag repeated over 8 channels each
+
+        Implementation note
+        -------------------
+        Completely vmap-free at call time.  Instead of filter_vmap over N roots
+        and N×8 leaves, all encoder passes are implemented as explicit batched
+        einsums over the N (or N×8) leading axis.  This makes the layer safe
+        under any combination of outer jax.vmap / jax.jit transforms because
+        XLA only ever sees ordinary batched matrix multiplications — no nested
+        vmap axes that trip the HLO shape verifier.
         """
-        n_leaves  = ENCODER_STAGE2_COUNT         # 8
-        leaf_out  = ENCODER_OUT_CHANNELS          # 8 channels per leaf
+        n_leaves = ENCODER_STAGE2_COUNT   # 8  (leaves per root)
+        leaf_out  = ENCODER_OUT_CHANNELS   # 8  (channels per leaf output)
 
-        def _run_one_stack(enc1, enc2s, x, active):
-            # Stage 1 (root): (1, n, n) -> (8, n, n)
-            out1, act1 = enc1(x, active)
-            n, m = out1.shape[1], out1.shape[2]
+        # Static pairwise combination indices (4C2 = 6 pairs)
+        idx1 = jnp.array([0, 0, 0, 1, 1, 2])
+        idx2 = jnp.array([1, 2, 3, 2, 3, 3])
 
-            # Split root output into 8 single-channel inputs for the leaves
-            channels = out1.reshape(n_leaves, 1, n, m)          # (8, 1, n, n)
-            acts     = jnp.broadcast_to(act1, (n_leaves,))       # (8,)
+        N  = xs.shape[0]
+        n  = xs.shape[2]
+        m  = xs.shape[3]
+        NL = N * n_leaves   # total leaf encoders
 
-            # Stage 2 (leaves): 8 × (1, n, n) -> 8 × (8, n, n)
-            outs2, acts2 = eqx.filter_vmap(
-                lambda enc, ch, act: enc(ch, act)
-            )(enc2s, channels, acts)
-            # outs2: (8, 8, n, n) | acts2: (8,)
+        # ── Stage 1: N root encoders (batched einsum, no vmap) ───────────────
+        # conv1: (N, in_ch=1) → (N, EXPAND_CH=4)
+        # weight shape after N-vmap: (N, 4, 1, 1, 1) → slice to (N, 4, 1)
+        # bias shape after N-vmap:   (N, 4, 1, 1)  — already broadcastable over (N, 4, h, w)
+        w1 = self.stage1_encs.conv1.weight[..., 0, 0]           # (N, 4, 1)
+        b1 = self.stage1_encs.conv1.bias                         # (N, 4, 1, 1)
+        s1c1 = (jnp.einsum('noi,nihw->nohw', w1, xs)
+                + b1)                                            # (N, 4, n, m)
 
-            # Flatten leaves: (8, 8, n, n) -> (64, n, n)
-            out = outs2.reshape(n_leaves * leaf_out, n, m)
+        # Pairwise matmul: flatten (N, pairs=6) → (N*6) so the matmul sees
+        # only ONE pre-existing batch dim.  Under jit+vmap(B), XLA then sees
+        # (B, N*6) = 2 batch dims — the max that works without axis-ordering
+        # conflicts in XLA's HLO verifier.
+        P = idx1.shape[0]  # 6
+        left_flat  = s1c1[:, idx1].reshape(N * P, n, m)    # (N*6, n, m)
+        right_flat = s1c1[:, idx2].reshape(N * P, n, m)    # (N*6, n, m)
+        s1_pairs   = jnp.matmul(left_flat, right_flat).reshape(N, P, n, m)  # (N, 6, n, m)
 
-            # Each of 8 leaf flags covers leaf_out=8 output channels
-            out_active = jnp.repeat(acts2, leaf_out)             # (64,)
+        # conv2: (N, INTER=10) → (N, INTER_STACK=8)
+        # weight after N-vmap: (N, 8, 10, 1, 1) → (N, 8, 10)
+        # bias after N-vmap:   (N, 8, 1, 1)
+        s1_concat = jnp.concatenate([s1c1, s1_pairs], axis=1)   # (N, 10, n, m)
+        w2 = self.stage1_encs.conv2.weight[..., 0, 0]           # (N, 8, 10)
+        b2 = self.stage1_encs.conv2.bias                         # (N, 8, 1, 1)
+        s1_active = (jnp.einsum('noi,nihw->nohw', w2, s1_concat)
+                     + b2)                                       # (N, 8, n, m)
 
-            return out, out_active
+        # Gate: zero inactive stacks via lax.select (jnp.where)
+        s1_out = jnp.where(
+            is_active_flags[:, None, None, None],
+            s1_active,
+            jnp.zeros_like(s1_active),
+        )                                                          # (N, 8, n, m)
 
-        # stacked_out:    (N, 64, n, n)
-        # stacked_active: (N, 64)
-        stacked_out, stacked_active = eqx.filter_vmap(_run_one_stack)(
-            self.stage1_encs, self.stage2_encs, xs, is_active_flags
-        )
+        # ── Prepare leaf inputs ──────────────────────────────────────────────
+        # Split root output channels → NL single-channel leaf inputs
+        leaf_inputs = s1_out.reshape(NL, 1, n, m)                # (NL, 1, n, m)
+        leaf_flags  = jnp.repeat(is_active_flags, n_leaves)      # (NL,) bool
 
-        n, m = stacked_out.shape[2], stacked_out.shape[3]
-        out        = stacked_out.reshape(-1, n, m)   # (64*N, n, n)
-        out_active = stacked_active.reshape(-1)       # (64*N,)
+        # ── Stage 2: N×8 leaf encoders (batched einsum over NL, no vmap) ─────
+        # Flatten double-vmapped weights/biases (N, 8, ...) → (NL, ...) at each layer
+        # conv1 weights/biases:  (N, 8, 4, 1, 1, 1) → (NL, 4, 1, 1, 1) and (N, 8, 4, 1, 1) → (NL, 4, 1, 1)
+        # conv2 weights/biases:  (N, 8, 8, 10, 1, 1) → (NL, 8, 10, 1, 1) and (N, 8, 8, 1, 1) → (NL, 8, 1, 1)
+        s2w1 = self.stage2_encs.conv1.weight               # (N, 8, 4, 1, 1, 1)
+        s2b1 = self.stage2_encs.conv1.bias                 # (N, 8, 4, 1, 1)
+        s2w2 = self.stage2_encs.conv2.weight               # (N, 8, 8, 10, 1, 1)
+        s2b2 = self.stage2_encs.conv2.bias                 # (N, 8, 8, 1, 1)
+
+        w3 = s2w1.reshape(NL, *s2w1.shape[2:])[..., 0, 0]  # (NL, 4, 1)
+        b3 = s2b1.reshape(NL, *s2b1.shape[2:])              # (NL, 4, 1, 1)
+        w4 = s2w2.reshape(NL, *s2w2.shape[2:])[..., 0, 0]  # (NL, 8, 10)
+        b4 = s2b2.reshape(NL, *s2b2.shape[2:])              # (NL, 8, 1, 1)
+
+        # conv1 → (NL, 4, n, m)
+        s2c1 = (jnp.einsum('noi,nihw->nohw', w3, leaf_inputs)
+                + b3)
+
+        # Same flat-reshape pairwise matmul for stage-2 leaves (NL instead of N)
+        left_flat2  = s2c1[:, idx1].reshape(NL * P, n, m)    # (NL*6, n, m)
+        right_flat2 = s2c1[:, idx2].reshape(NL * P, n, m)    # (NL*6, n, m)
+        s2_pairs    = jnp.matmul(left_flat2, right_flat2).reshape(NL, P, n, m)  # (NL, 6, n, m)
+
+        # conv2 → (NL, 8, n, m)
+        s2_concat = jnp.concatenate([s2c1, s2_pairs], axis=1)   # (NL, 10, n, m)
+        s2_active = (jnp.einsum('noi,nihw->nohw', w4, s2_concat)
+                     + b4)                                       # (NL, 8, n, m)
+
+        # Gate inactive leaves to zero
+        s2_out = jnp.where(
+            leaf_flags[:, None, None, None],
+            s2_active,
+            jnp.zeros_like(s2_active),
+        )                                                          # (NL, 8, n, m)
+
+        # ── Assemble final output ────────────────────────────────────────────
+        out = s2_out.reshape(NL * leaf_out, n, m)               # (64*N, n, m)
+
+        # Each leaf produces leaf_out=8 channels; all share the leaf's flag
+        out_active = jnp.repeat(
+            leaf_flags.reshape(N, n_leaves), leaf_out, axis=1
+        ).reshape(-1)                                            # (64*N,)
 
         return out, out_active

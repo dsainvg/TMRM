@@ -35,6 +35,11 @@ from .training import (
 	TrainingConfig,
 )
 
+from .data import (
+	DataConfig,
+	DATA_CFG,
+)
+
 __all__ = [
 	# Encoder node
 	"ENCODER_IN_CHANNELS",
@@ -61,5 +66,8 @@ __all__ = [
 	"ModelConfig",
 	# Training config
 	"TrainingConfig",
+	# Data / task config
+	"DataConfig",
+	"DATA_CFG",
 ]
 
