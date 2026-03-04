@@ -104,17 +104,36 @@ class Model(eqx.Module):
             for i in range(config.n_problems)
         ]
 
-        # ── Per-problem encoder masks (random subset selection) ───────────
+        # ── Per-problem encoder masks (round-robin then random) ───────────
+        # Shuffle all encoder slots once to establish a canonical random
+        # order.  Problems draw consecutive windows from this cyclic order,
+        # so every slot is visited before any slot is reused.  Once the
+        # window wraps past the end, later problems naturally begin to share
+        # slots with earlier ones — giving the "common places" overlap after
+        # full coverage.
         seed = int(jax.random.randint(k_mask, (), 0, 2**31 - 1))
         rng = np.random.default_rng(seed)
+        base_order = rng.permutation(config.n_encoders)  # one global shuffle
+
         masks = []
+        offset = 0
         for p in config.problems:
-            chosen = rng.choice(
-                config.n_encoders, size=p.n_encoders_used, replace=False,
-            )
+            # Consecutive window into the cyclic base order.
+            raw = np.array([
+                base_order[i % config.n_encoders]
+                for i in range(offset, offset + p.n_encoders_used)
+            ])
+            # De-duplicate wrap-around collisions while preserving order.
+            seen: set = set()
+            chosen = []
+            for idx in raw.tolist():
+                if idx not in seen:
+                    seen.add(idx)
+                    chosen.append(idx)
             mask = np.zeros(config.n_encoders, dtype=bool)
             mask[chosen] = True
             masks.append(mask)
+            offset += p.n_encoders_used
         self.encoder_masks = masks
 
     # ── forward pass ──────────────────────────────────────────────────────
