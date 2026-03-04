@@ -17,7 +17,7 @@ import optax
 from model import Model
 from utils.config.model import ModelConfig
 from utils.config.data import DataConfig
-from utils.config.trainparams import DATA_CFG, MODEL_CFG
+from utils.config.trainparams import DATA_CFG, FLOW_DATA_CFG, MODEL_CFG
 from utils.config.training import TrainingConfig
 
 
@@ -113,7 +113,39 @@ def load_data(cfg: DataConfig = DATA_CFG):
     )
 
 
-# ── 3. Model construction ─────────────────────────────────────────────────────
+# ── 3. Encoder slot scattering ─────────────────────────────────────────────────────────
+
+def build_xs_batch(
+    data_batch: np.ndarray,
+    slot_indices: np.ndarray,
+    n_encoders: int,
+    n: int,
+) -> np.ndarray:
+    """
+    Scatter per-task input channels into the full shared encoder slot array.
+
+    Each task uses only ``len(slot_indices)`` of the ``n_encoders`` slots in
+    the shared backbone.  Active slots receive the task's one-hot channels;
+    inactive slots remain zero (and their ``is_active`` flags will be False).
+
+    Parameters
+    ----------
+    data_batch  : (B, n_channels_in, n, n)  float32 one-hot puzzle channels
+    slot_indices: (n_channels_in,) int       encoder slot indices for this task
+    n_encoders  : int                        total encoder slots (e.g. 12)
+    n           : int                        spatial grid size
+
+    Returns
+    -------
+    (B, n_encoders, 1, n, n) float32 — ready for model forward pass
+    """
+    B = data_batch.shape[0]
+    xs = np.zeros((B, n_encoders, n, n), dtype=np.float32)
+    xs[:, slot_indices, :, :] = data_batch   # scatter the task channels
+    return xs[:, :, np.newaxis, :, :]        # (B, n_encoders, 1, n, n)
+
+
+# ── 4. Model construction ───────────────────────────────────────────────────────────
 
 def build_model(key: jax.Array, model_cfg: ModelConfig = MODEL_CFG) -> Model:
     """Construct the TMRM model from a ModelConfig."""
@@ -168,41 +200,53 @@ def build_optimiser(train_cfg: TrainingConfig, model: Model):
     return tx, opt_state
 
 
-# ── 5. Evaluation ─────────────────────────────────────────────────────────────
+# ── 6. Evaluation ─────────────────────────────────────────────────────────────
 
 def evaluate(
     model: Model,
     X_val: np.ndarray,
     Y_val: np.ndarray,
     cfg: DataConfig = DATA_CFG,
+    problem_idx: int = 0,
 ) -> dict:
     """
-    Compute validation loss and cell-level accuracy.
+    Compute validation loss and cell-level accuracy for one task.
 
-    A cell is correct when the predicted digit (argmax over output channels)
-    matches the true digit.
+    Parameters
+    ----------
+    model       : trained TMRM model
+    X_val       : (N_val, n_channels_in, n, n)  one-hot puzzle channels
+    Y_val       : (N_val, fc_out)  flattened one-hot solution targets
+    cfg         : DataConfig for this task (controls n, n_channels_out)
+    problem_idx : which problem head / encoder mask to use (Python int)
 
     Returns
     -------
     dict with keys ``'loss'`` (float) and ``'cell_acc'`` (float in [0, 1]).
     """
+    n_encoders   = model.config.n_encoders
+    slot_indices = model.active_encoder_indices(problem_idx)
+
     total_loss    = 0.0
     correct_cells = 0
     total_cells   = 0
-
     eps = 1e-7
 
     for i in range(len(X_val)):
-        xs     = jnp.array(X_val[i][:, None, :, :])  # (n_channels_in, 1, n, n)
-        y      = jnp.array(Y_val[i])                  # (fc_out,)
-        logits = model(0, xs)                          # (fc_out,)
+        # Scatter single sample's channels into the 12-slot backbone tensor
+        xs_np = build_xs_batch(
+            X_val[i : i + 1], slot_indices, n_encoders, cfg.n
+        )  # (1, n_encoders, 1, n, n)
+        xs     = jnp.array(xs_np[0])          # (n_encoders, 1, n, n)
+        y      = jnp.array(Y_val[i])          # (fc_out,)
+        logits = model(problem_idx, xs)        # (fc_out,)
 
         p   = jnp.clip(logits, eps, 1.0 - eps)
         bce = -(y * jnp.log(p) + (1.0 - y) * jnp.log(1.0 - p))
         total_loss += float(jnp.mean(bce))
 
-        pred_ch = logits.reshape(cfg.n_channels_out, cfg.n, cfg.n)
-        true_ch = y.reshape(cfg.n_channels_out, cfg.n, cfg.n)
+        pred_ch  = logits.reshape(cfg.n_channels_out, cfg.n, cfg.n)
+        true_ch  = y.reshape(cfg.n_channels_out, cfg.n, cfg.n)
         pred_dig = jnp.argmax(pred_ch, axis=0)
         true_dig = jnp.argmax(true_ch, axis=0)
         correct_cells += int(jnp.sum(pred_dig == true_dig))

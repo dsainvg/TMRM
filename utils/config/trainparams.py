@@ -17,19 +17,29 @@ LOG_EVERY      = 10
 SEED           = 42
 
 # ── Task / data dimensionality ───────────────────────────────────────────────
-N              = 9    # grid size (N×N cells)
-N_CHANNELS_IN  = 10   # digits 0-9 → 10 one-hot input channels
-N_CHANNELS_OUT = 9    # digits 1-9 → 9 one-hot output channels
+N              = 4    # grid size (N×N cells)
+N_CHANNELS_IN  = 5   # per-task one-hot input channels (0..4 for both tasks)
+N_CHANNELS_OUT = 4   # per-task one-hot output channels (1..4 for both tasks)
 
-# ── Paths & dataset ─────────────────────────────────────────────────────────
-DATASET_URL      = "https://raw.githubusercontent.com/dsainvg/SUDOKU/main/outputs/dataset_9x9.npz"
+# ── Encoder pool (shared backbone) ──────────────────────────────────────────
+# 12 total slots shared across all tasks; each task randomly occupies 5.
+# The remaining 7 slots stay inactive (zero-filled input + is_active=False).
+N_ENCODERS = 8
+
+# ── Paths & datasets ────────────────────────────────────────────────────────
+# Task 0 — 4×4 Sudoku
+DATASET_URL      = "https://raw.githubusercontent.com/dsainvg/SUDOKU/main/outputs/dataset_4x4.npz"
 DATA_DIR         = "data"
-DATASET_FILENAME = "dataset_9x9.npz"
+DATASET_FILENAME = "dataset_4x4.npz"
 CHECKPOINT_DIR   = "checkpoints"
 
+# Task 1 — 4×4 Flow Free
+FLOW_DATASET_URL      = "https://github.com/dsainvg/FLOW/raw/refs/heads/main/outputs/flow_4x4.npz"
+FLOW_DATASET_FILENAME = "flow_4x4.npz"
+
 # ── Model architecture ───────────────────────────────────────────────────────
-N_DECODER_LAYERS  = 8
-MAX_DECODER_NODES = 150
+N_DECODER_LAYERS  = 5
+MAX_DECODER_NODES = 50
 FC_ACTIVATION     = "sigmoid"   # output activation for the FC head
 
 # ── Encoder node ─────────────────────────────────────────────────────────────
@@ -85,6 +95,7 @@ TRAIN_CFG = TrainingConfig(
     warmup_steps=0,
 )
 
+# Task 0: Sudoku
 DATA_CFG = DataConfig(
     dataset_url=DATASET_URL,
     data_dir=DATA_DIR,
@@ -95,14 +106,30 @@ DATA_CFG = DataConfig(
     n_channels_out=N_CHANNELS_OUT,
 )
 
+# Task 1: Flow Free
+FLOW_DATA_CFG = DataConfig(
+    dataset_url=FLOW_DATASET_URL,
+    data_dir=DATA_DIR,
+    dataset_filename=FLOW_DATASET_FILENAME,
+    checkpoint_dir=CHECKPOINT_DIR,
+    n=N,
+    n_channels_in=N_CHANNELS_IN,
+    n_channels_out=N_CHANNELS_OUT,
+)
+
 MODEL_CFG = ModelConfig(
     n=N,
-    n_encoders=N_CHANNELS_IN,
+    n_encoders=N_ENCODERS,           # 12 total slots in the shared backbone
     n_decoder_layers=N_DECODER_LAYERS,
     max_decoder_nodes=MAX_DECODER_NODES,
     problems=(
-        ProblemConfig(
-            n_encoders_used=N_CHANNELS_IN,
+        ProblemConfig(               # Task 0 — Sudoku
+            n_encoders_used=N_CHANNELS_IN,   # 5 of 12 slots, randomly assigned
+            fc_out_features=N_CHANNELS_OUT * N * N,
+            fc_activation=FC_ACTIVATION,
+        ),
+        ProblemConfig(               # Task 1 — Flow Free
+            n_encoders_used=N_CHANNELS_IN,   # 5 of 12 slots, randomly assigned
             fc_out_features=N_CHANNELS_OUT * N * N,
             fc_activation=FC_ACTIVATION,
         ),
