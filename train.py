@@ -261,7 +261,7 @@ def train(
             f"({elapsed:.1f}s)"
         )
 
-        if avg_val_loss < best_val_loss:
+        if avg_val_loss < best_val_loss - 0.001:
             best_val_loss = avg_val_loss
             ckpt_path     = data_cfg.checkpoint_dir_path / "best_model.eqx"
             eqx.tree_serialise_leaves(str(ckpt_path), model)
