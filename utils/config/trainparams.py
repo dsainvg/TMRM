@@ -8,13 +8,13 @@ automatically.
 
 # ── Training hyperparameters ─────────────────────────────────────────────────
 BATCH_SIZE     = 1024
-N_EPOCHS       = 25000
-LEARNING_RATE  = 3e-3
+N_EPOCHS       = 2500
+LEARNING_RATE  = 3e-1
 OPTIMISER      = "adam"
 LR_SCHEDULE    = "constant"
-GRAD_CLIP_NORM = 0.99
+GRAD_CLIP_NORM = 1.02
 LOG_EVERY      = 10
-SEED           = 42
+SEED           = 31
 
 # ── Task / data dimensionality ───────────────────────────────────────────────
 N              = 4    # grid size (N×N cells)
@@ -39,7 +39,7 @@ FLOW_DATASET_FILENAME = "flow_4x4.npz"
 
 # ── Model architecture ───────────────────────────────────────────────────────
 N_DECODER_LAYERS  = 5
-MAX_DECODER_NODES = 50
+MAX_DECODER_NODES = 45
 FC_ACTIVATION     = "sigmoid"   # output activation for the FC head
 
 # ── Encoder node ─────────────────────────────────────────────────────────────
