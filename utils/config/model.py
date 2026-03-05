@@ -7,28 +7,30 @@ no trainable arrays, only structural metadata.
 
 from dataclasses import dataclass, field
 
-# Supported FC activations — kept in sync with fc_layer._ACTIVATIONS.
+# Supported PA activations — kept in sync with pa_layer._ACTIVATIONS.
 _VALID_ACTIVATIONS = frozenset({'relu', 'gelu', 'tanh', 'sigmoid', 'identity'})
 
 
 @dataclass(frozen=True)
 class ProblemConfig:
-    """Description of a single problem head.
+    """Description of a single problem port-adapter head.
 
     Attributes
     ----------
     n_encoders_used : int
         How many of the total encoder slots this problem activates.
         Must be in ``[1, ModelConfig.n_encoders]``.
-    fc_out_features : int
-        Dimensionality of the FC head output for this problem.
-    fc_activation : str
-        Activation applied after the FC linear projection.
+    pa_out_channels : int
+        Number of spatial output channels produced by the Port Adapter.
+        The adapter output is ``(pa_out_channels, n, n)`` flattened to
+        ``pa_out_channels * n * n`` for the loss function.
+    pa_activation : str
+        Activation applied after the 1×1 conv projection.
         One of ``'relu'``, ``'gelu'``, ``'tanh'``, ``'sigmoid'``, ``'identity'``.
     """
     n_encoders_used: int
-    fc_out_features: int
-    fc_activation: str = 'relu'
+    pa_out_channels: int
+    pa_activation: str = 'sigmoid'
 
 
 @dataclass(frozen=True)
@@ -81,14 +83,14 @@ class ModelConfig:
                     f"problems[{i}].n_encoders_used={p.n_encoders_used} "
                     f"not in [1, {self.n_encoders}]"
                 )
-            if p.fc_out_features < 1:
+            if p.pa_out_channels < 1:
                 raise ValueError(
-                    f"problems[{i}].fc_out_features must be >= 1, "
-                    f"got {p.fc_out_features}"
+                    f"problems[{i}].pa_out_channels must be >= 1, "
+                    f"got {p.pa_out_channels}"
                 )
-            if p.fc_activation not in _VALID_ACTIVATIONS:
+            if p.pa_activation not in _VALID_ACTIVATIONS:
                 raise ValueError(
-                    f"problems[{i}].fc_activation='{p.fc_activation}' "
+                    f"problems[{i}].pa_activation='{p.pa_activation}' "
                     f"not in {sorted(_VALID_ACTIVATIONS)}"
                 )
 

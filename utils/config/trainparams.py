@@ -9,12 +9,12 @@ automatically.
 # ── Training hyperparameters ─────────────────────────────────────────────────
 BATCH_SIZE     = 1024
 N_EPOCHS       = 2500
-LEARNING_RATE  = 3e-1
+LEARNING_RATE  = 5e-3
 OPTIMISER      = "adam"
 LR_SCHEDULE    = "constant"
-GRAD_CLIP_NORM = 1.02
-LOG_EVERY      = 10
-SEED           = 31
+GRAD_CLIP_NORM = 1.01
+LOG_EVERY      = 100
+SEED           = 41
 
 # ── Task / data dimensionality ───────────────────────────────────────────────
 N              = 4    # grid size (N×N cells)
@@ -39,8 +39,8 @@ FLOW_DATASET_FILENAME = "flow_4x4.npz"
 
 # ── Model architecture ───────────────────────────────────────────────────────
 N_DECODER_LAYERS  = 5
-MAX_DECODER_NODES = 45
-FC_ACTIVATION     = "sigmoid"   # output activation for the FC head
+MAX_DECODER_NODES = 170
+PA_ACTIVATION     = "sigmoid"   # output activation for the Port Adapter
 
 # ── Encoder node ─────────────────────────────────────────────────────────────
 ENCODER_IN_CHANNELS           = 1
@@ -56,7 +56,7 @@ ENCODER_STACK_OUT_CHANNELS    = 64  # ENCODER_STAGE2_COUNT × ENCODER_OUT_CHANNE
 
 # ── Decoder node ─────────────────────────────────────────────────────────────
 DECODER_MAX_PARENTS           = 16
-DECODER_ACTIVATION_THRESHOLD  = 12  # min parents active to fire (≥12/16)
+DECODER_ACTIVATION_THRESHOLD  = 9  # min parents active to fire (≥9/16)
 DECODER_TOP_K_EXTRACT         = 12  # initial proxy-score candidates
 DECODER_INTERACT_RANKS        = 8   # top-k used for pairwise combos (8C2=28)
 DECODER_PRESERVE_RANKS        = 4   # ranks 9-12 kept raw
@@ -74,8 +74,9 @@ FANOUT_SECOND_SIGMA = 3.0
 FANOUT_SECOND_LO    = 6
 FANOUT_SECOND_HI    = 20
 
-# ── FC head ───────────────────────────────────────────────────────────────────
-FC_DEFAULT_ACTIVATION = 'relu'
+# ── Port Adapter head ────────────────────────────────────────────────────────
+PA_DEFAULT_ACTIVATION = 'sigmoid'
+FC_DEFAULT_ACTIVATION = 'relu'    # kept for fc_layer.py (backward compat)
 
 # ── Config objects ───────────────────────────────────────────────────────────
 from .training import TrainingConfig
@@ -124,14 +125,14 @@ MODEL_CFG = ModelConfig(
     max_decoder_nodes=MAX_DECODER_NODES,
     problems=(
         ProblemConfig(               # Task 0 — Sudoku
-            n_encoders_used=N_CHANNELS_IN,   # 5 of 12 slots, randomly assigned
-            fc_out_features=N_CHANNELS_OUT * N * N,
-            fc_activation=FC_ACTIVATION,
+            n_encoders_used=N_CHANNELS_IN,   # 5 of 8 slots, randomly assigned
+            pa_out_channels=N_CHANNELS_OUT,  # 4 channels; PA outputs (4, n, n)
+            pa_activation=PA_ACTIVATION,
         ),
         ProblemConfig(               # Task 1 — Flow Free
-            n_encoders_used=N_CHANNELS_IN,   # 5 of 12 slots, randomly assigned
-            fc_out_features=N_CHANNELS_OUT * N * N,
-            fc_activation=FC_ACTIVATION,
+            n_encoders_used=N_CHANNELS_IN,   # 5 of 8 slots, randomly assigned
+            pa_out_channels=N_CHANNELS_OUT,  # 4 channels; PA outputs (4, n, n)
+            pa_activation=PA_ACTIVATION,
         ),
     ),
 )

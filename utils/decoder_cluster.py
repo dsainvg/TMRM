@@ -194,7 +194,9 @@ class DecoderCluster(eqx.Module):
     """
 
     layers: list             # List[DecoderLayer]
-    output_node_indices: list  # List[np.ndarray]  — per-layer output node indices
+    # Static: output routing is fixed at init and must not be traced through
+    # JIT (avoids np→jax type mutation that retriggers XLA compilation).
+    output_node_indices: list = eqx.field(static=True)  # List[np.ndarray]
 
     def __init__(
         self,
@@ -326,6 +328,50 @@ class DecoderCluster(eqx.Module):
     def n_output_nodes(self) -> int:
         """Total number of output nodes across all layers."""
         return sum(idx.size for idx in self.output_node_indices)
+
+    def forward_debug(
+        self,
+        encoder_out: jax.Array,    # (n_inputs, n, n)
+        encoder_flags: jax.Array,  # (n_inputs,) bool
+    ):
+        """
+        Like __call__ but also returns per-layer (K,) bool gate-active arrays.
+
+        Used exclusively for debug logging on the first training step.
+        Not JIT-compiled — call only outside eqx.filter_jit.
+
+        Returns
+        -------
+        out        : (total_output_nodes, n, n)
+        flags      : (total_output_nodes,) bool
+        layer_flags: list[np.ndarray]  — length == len(self.layers)
+                     each entry is a (K,) bool array of gate activation per node
+        """
+        all_out:   list = []
+        all_flags: list = []
+
+        cur_out, cur_flags = encoder_out, encoder_flags
+        for layer in self.layers:
+            o, f = layer(cur_out, cur_flags)
+            all_out.append(o)
+            all_flags.append(f)
+            cur_out, cur_flags = o, f
+
+        # Convert to plain numpy for printing (device arrays -> host)
+        layer_flags = [np.array(f) for f in all_flags]
+
+        parts_out:   list = []
+        parts_flags: list = []
+        for l_idx, idx in enumerate(self.output_node_indices):
+            if idx.size > 0:
+                parts_out.append(all_out[l_idx][idx])
+                parts_flags.append(all_flags[l_idx][idx])
+
+        return (
+            jnp.concatenate(parts_out, axis=0),
+            jnp.concatenate(parts_flags, axis=0),
+            layer_flags,
+        )
 
     def __call__(
         self,

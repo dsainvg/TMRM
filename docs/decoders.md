@@ -14,7 +14,8 @@ The atomic computation unit. Takes up to 16 input matrices and produces exactly 
 | Attribute | Type | Shape | Purpose |
 |-----------|------|-------|---------|
 | `conv1` | `eqx.nn.Conv2d` | weights `(4, 32, 1, 1)`, bias `(4,)` | Collapse 32 mixed channels → 4 |
-| `conv2` | `eqx.nn.Conv2d` | weights `(1, 4, 1, 1)`, bias `(1,)` | Project 4 channels → 1 output || swish | `jax.nn.swish` | — (parameter-free) | Element-wise activation after `conv2` |
+| `conv2` | `eqx.nn.Conv2d` | weights `(1, 4, 1, 1)`, bias `(1,)` | Project 4 channels → 1 output |
+| tanh | `jnp.tanh` | — (parameter-free) | Element-wise activation after `conv2` |
 ### Trainable parameters per node
 
 | Layer | Weights | Bias | Subtotal |
@@ -30,7 +31,7 @@ Given `x: (16, n, n)` and `is_active_flags: (16,)`:
 ```
 Step 1 — Threshold gate
   active_count = sum(is_active_flags)          # scalar int
-  if active_count < 12  →  return zeros (n,n), False
+  if active_count < 8  →  return zeros (n,n), False
 
 Step 2 — Determinant scoring  [stable via slogdet]
   _, log_abs_det = jnp.linalg.slogdet(x)      # (16,) — log|det| per matrix
@@ -58,8 +59,8 @@ Step 7 — conv1
 Step 8 — conv2
   out = conv2(hidden)                           # (1, n, n)
 
-Step 9 — swish  [parameter-free]
-  out = swish(out)                              # (1, n, n)  element-wise x·σ(x)
+Step 9 — tanh  [parameter-free]
+  out = tanh(out)                               # (1, n, n)  element-wise
   out = out.squeeze(0)                          # (n, n)
 
 Return: out (n,n), True
@@ -81,7 +82,7 @@ Implemented with `jax.lax.cond` — XLA traces both branches but executes only o
 | 28 matmuls of (n,n)×(n,n) | O(28 n³) |
 | `conv1` — 32×4 per pixel | O(128 n²) |
 | `conv2` — 4×1 per pixel | O(4 n²) |
-| swish — element-wise | O(n²) — negligible |
+| tanh — element-wise | O(n²) — negligible |
 
 For typical `n = 8`: slogdet ≈ 16 × 512 = 8 192 ops; matmuls ≈ 28 × 512 = 14 336 ops.
 For `n = 32`: slogdet ≈ 524 K ops; matmuls ≈ 917 K ops — `n³` dominant.
@@ -242,7 +243,7 @@ All gathered at forward time into a single `(total_output_nodes, n, n)` tensor.
 
 ### Parameter count scaling
 
-Every node in every layer, regardless of which layer it lives in, has exactly **137 trainable parameters** (swish is parameter-free and does not change this count).
+Every node in every layer, regardless of which layer it lives in, has exactly **137 trainable parameters** (tanh is parameter-free and does not change this count).
 
 $$\text{Total params} = N_{total} \times 137$$
 
@@ -286,7 +287,7 @@ cluster(encoder_out, encoder_flags)
 # flags: (total_output_nodes,) bool
 ```
 
-All output nodes from all layers (unconnected intermediates + final layer) are concatenated along axis 0. This tensor feeds directly into the FC head.
+All output nodes from all layers (unconnected intermediates + final layer) are concatenated along axis 0. This tensor feeds directly into the Port Adapter (PALayer).
 
 ### Forward pass — call path
 
@@ -308,7 +309,7 @@ The Python `for` loop unrolls at XLA trace time because `self.layers` is a fixed
 | Constant | Value | Role |
 |---|---|---|
 | `DECODER_MAX_PARENTS` | 16 | Inputs per decoder node |
-| `DECODER_ACTIVATION_THRESHOLD` | 12 | Min active parents to fire (12/16 = 75%) |
+| `DECODER_ACTIVATION_THRESHOLD` | 8 | Min active parents to fire (8/16 = 50%) |
 | `DECODER_TOP_K_EXTRACT` | 12 | How many inputs survive slogdet filter |
 | `DECODER_INTERACT_RANKS` | 8 | Top-8 → pairwise combinations (8C2 = 28) |
 | `DECODER_PRESERVE_RANKS` | 4 | Ranks 9-12 passed raw (12 - 8 = 4) |
@@ -324,18 +325,18 @@ The Python `for` loop unrolls at XLA trace time because `self.layers` is a fixed
 
 ---
 
-## 5. `FCLayer` — Terminal Projection (`utils/fc_layer.py`)
+## 5. `PALayer` — Terminal Projection (`utils/pa_layer.py`)
 
-The `FCLayer` is the final stage of the full TMRM pipeline. It receives the flattened concatenation of all output nodes from the `DecoderCluster` and projects them to task-specific logits or values.
+The `PALayer` (Port Adapter) is the final stage of the full TMRM pipeline. It receives the `(total_output_nodes, n, n)` output from the `DecoderCluster` and projects it to task-specific logits or values using a lightweight 1×1 convolution followed by a reshape to a 1-D vector.
 
-All FC nodes are always active — there is **no** `is_active` flag in this module.
+All nodes in the PA layer are always active — there is **no** `is_active` flag in this module.
 
 ### What it holds
 
 | Attribute | Type | Role |
 |-----------|------|------|
-| `linear` | `eqx.nn.Linear` | Trainable weight matrix + bias: `(in_features → out_features)` |
-| `activation` | `callable` (static, non-trainable) | Element-wise activation applied after `linear` |
+| `conv` | `eqx.nn.Conv2d` | 1×1 conv: `(n_decoder_nodes → pa_out_channels, n, n)` |
+| `activation` | `callable` (static, non-trainable) | Element-wise activation applied after `conv` |
 
 ### Supported activations
 
@@ -343,10 +344,10 @@ Specified by the `activation` string argument at construction time:
 
 | Name | Function | Notes |
 |------|----------|-------|
-| `'relu'` | `jax.nn.relu` | **Default** (`FC_DEFAULT_ACTIVATION`) |
-| `'gelu'` | `jax.nn.gelu` | |
+| `'sigmoid'` | `jax.nn.sigmoid` | **Default** (`PA_DEFAULT_ACTIVATION`) |
+| `'relu'` | `jax.nn.relu` | |
 | `'tanh'` | `jnp.tanh` | |
-| `'sigmoid'` | `jax.nn.sigmoid` | |
+| `'gelu'` | `jax.nn.gelu` | |
 | `'identity'` | pass-through | No nonlinearity |
 
 Unknown activation names raise `ValueError` at construction time.
@@ -354,24 +355,25 @@ Unknown activation names raise `ValueError` at construction time.
 ### Call signature
 
 ```python
-FCLayer(in_features, out_features, key, activation='relu')
+PALayer(n_decoder_nodes, pa_out_channels, n, key, activation='sigmoid')
 
 # Forward:
-x: (in_features,)   →   activation(linear(x))   : (out_features,)
+x: (n_decoder_nodes, n, n)   →   activation(conv(x)).reshape(-1)   : (pa_out_channels × n²,)
 ```
 
-The input must be a 1-D vector. Flatten and concatenate the `DecoderCluster` output before passing it in:
+The `DecoderCluster` tensor is passed directly (no pre-flattening needed):
 
 ```python
 dec_out, _ = cluster(encoder_out, encoder_flags)
 # dec_out: (total_output_nodes, n, n)
-flat   = dec_out.reshape(-1)     # (total_output_nodes × n²,)
-logits = fc_layer(flat)          # (out_features,)
+logits = pa_layer(dec_out)       # (pa_out_channels × n²,)
 ```
 
 ### Parameter count
 
-$$\text{params} = \text{in\_features} \times \text{out\_features} + \text{out\_features}$$
+$$\text{params} = n\_decoder\_nodes \times pa\_out\_channels + pa\_out\_channels$$
+
+For the current defaults (`n_decoder_nodes=15`, `pa_out_channels=4`): $15 \times 4 + 4 = \mathbf{64}$ params per head.
 
 The activation callable is stored as a `static` pytree field and contributes **zero** trainable parameters.
 
@@ -379,11 +381,11 @@ The activation callable is stored as a `static` pytree field and contributes **z
 
 | Constant | Value | File |
 |----------|------:|------|
-| `FC_DEFAULT_ACTIVATION` | `'relu'` | `utils/config/fc.py` |
+| `PA_DEFAULT_ACTIVATION` | `'sigmoid'` | `utils/config/trainparams.py` |
 
 ### Gradient flow note
 
-`FCLayer` is fully in the active gradient path from the task loss. Gradients flow back through the `linear` weight matrix into the `DecoderCluster` output tensor. The cluster's Decoder `conv1`/`conv2` weights therefore receive gradients from the task loss via `FCLayer`. Note that this gradient chain does **not** continue back through the Decoder gate into the Encoder weights — see the gradient barrier description in `architecture.md §4.3`.
+`PALayer` is fully in the active gradient path from the task loss. Gradients flow back through the `conv` weights into the `DecoderCluster` output tensor. The cluster's Decoder `conv1`/`conv2` weights therefore receive gradients from the task loss via `PALayer`. Note that this gradient chain does **not** continue back through the Decoder gate into the Encoder weights — see the gradient barrier description in `architecture.md §4.3`.
 
 ---
 
@@ -404,7 +406,8 @@ DecoderCluster Layers 1…
 Output gathering
   (total_output_nodes, n, n)      ← all unconnected + final layer nodes
 
-FC head
-  flatten + concat → 1D vector    ← total_output_nodes × n²
-  dense(out_features)             ← task-specific logits / values
+Port Adapter (PALayer)
+  1×1 conv → (pa_out_channels, n, n)  ← channel reduction
+  reshape → 1D vector             ← pa_out_channels × n²
+  task-specific logits / values
 ```

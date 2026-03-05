@@ -15,7 +15,7 @@ from .trainparams import (
 	DECODER_INTERMEDIATE_CHANNELS,
 	DECODER_HIDDEN_CHANNELS,
 	DECODER_OUT_CHANNELS,
-	FC_DEFAULT_ACTIVATION,
+	PA_DEFAULT_ACTIVATION,
 )
 
 from .model import (
@@ -56,8 +56,8 @@ __all__ = [
 	"ENCODER_STACK_DEPTH",
 	"ENCODER_INTER_STACK_CHANNELS",
 	"ENCODER_STACK_OUT_CHANNELS",
-	# FCLayer
-	"FC_DEFAULT_ACTIVATION",
+	# PALayer (Port Adapter)
+	"PA_DEFAULT_ACTIVATION",
 	# Model config
 	"ProblemConfig",
 	"ModelConfig",

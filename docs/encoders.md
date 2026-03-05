@@ -36,9 +36,15 @@ A single `Encoder` node maps `(in_channels, n, n) → (out_channels, n, n)` usin
                           │
                           ▼
                    (out_c, n, n)
+                          │
+                          ▼
+                    tanh  (element-wise, parameter-free)
+                          │
+                          ▼
+                   (out_c, n, n)   ← stage output
 ```
 
-The 4 channels from `conv1` are combined as all $\binom{4}{2} = 6$ ordered matrix products via batched `matmul`. These 6 interaction maps are concatenated with the original 4 channel maps, giving a 10-channel intermediate tensor. `conv2` then projects this down to the desired `out_channels`.
+The 4 channels from `conv1` are combined as all $\binom{4}{2} = 6$ ordered matrix products via batched `matmul`. These 6 interaction maps are concatenated with the original 4 channel maps, giving a 10-channel intermediate tensor. `conv2` projects this down to the desired `out_channels`, and `tanh` is applied element-wise at the end of each stage to bound the output before it enters the next stage's matmuls.
 
 Inactive nodes short-circuit via `jax.lax.cond`, returning a pre-allocated zero tensor and propagating `is_active = False` downstream without executing any computation.
 

@@ -120,6 +120,7 @@ class EncoderLayer(eqx.Module):
         b2 = self.stage1_encs.conv2.bias                         # (N, 8, 1, 1)
         s1_active = (jnp.einsum('noi,nihw->nohw', w2, s1_concat)
                      + b2)                                       # (N, 8, n, m)
+        s1_active = jnp.tanh(s1_active)                          # end-of-stage activation
 
         # Gate: zero inactive stacks via lax.select (jnp.where)
         s1_out = jnp.where(
@@ -160,6 +161,7 @@ class EncoderLayer(eqx.Module):
         s2_concat = jnp.concatenate([s2c1, s2_pairs], axis=1)   # (NL, 10, n, m)
         s2_active = (jnp.einsum('noi,nihw->nohw', w4, s2_concat)
                      + b4)                                       # (NL, 8, n, m)
+        s2_active = jnp.tanh(s2_active)                          # end-of-stage activation
 
         # Gate inactive leaves to zero
         s2_out = jnp.where(

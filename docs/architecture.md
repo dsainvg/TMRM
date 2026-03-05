@@ -70,7 +70,7 @@ The network handles multimodal or heterogeneous data through Encoder Modularity.
 
 You instantiate a fixed number of Encoders, each assigned to a specific data modality (e.g., Encoder A for visual features, Encoder B for text embeddings, Encoder C for continuous sensor data).
 
-Sparse Activation: If a specific problem or data sample only contains visual data, only Encoder A fires. Encoders B and C output their identity/zero states. The internal Decoder graph dynamically reacts: pathways heavily reliant on B and C will fail to meet their 12/16 activation threshold and will shut down. The network organically carves out a sub-graph optimized solely for visual processing.
+- **Sparse activation:** If a specific problem or data sample only contains visual data, only Encoder A fires. Encoders B and C output their identity/zero states. The internal Decoder graph dynamically reacts: pathways heavily reliant on B and C will fail to meet their 8/16 activation threshold and will shut down. The network organically carves out a sub-graph optimized solely for visual processing.
 
 4.2. Adapting to Different Output Formats
 
@@ -88,11 +88,11 @@ Example - Multi-Agent RL: The final stage might be split into two separate FC la
 
 Because the internal graph is randomized and uses the Top-K determinant selection, the network acts as an immense, untrained hash function of features initially.
 
-**Gradient routing — Decoder/FC head:** During training via backpropagation (`eqx.filter_value_and_grad`), gradients flow from the task loss backward through the FC layer into the DecoderCluster, updating each Decoder's `conv1` and `conv2` weights normally.
+**Gradient routing — Decoder/PA head:** During training via backpropagation (`eqx.filter_value_and_grad`), gradients flow from the task loss backward through the PALayer into the DecoderCluster, updating each Decoder's `conv1` and `conv2` weights normally.
 
 **Gradient barrier at the Decoder gate:** The `jax.lax.cond` threshold gate combined with the `slogdet`-based Top-12 sorting creates a gradient barrier between the DecoderCluster and the Encoder weights. Gradients from a downstream task loss do **not** flow back to update Encoder `conv1`/`conv2` weights through the cluster — `lax.cond` stops the VJP at the gate boundary.
 
-**Separate encoder training:** Encoders are trained using a dedicated encoder-level loss (applied directly to the `EncoderLayer` output), independently of the decoder/FC head loss. This two-stage training strategy — encoder loss + task loss — is the intended paradigm for the full network.
+**Sparse activation:** Encoders trained using a dedicated encoder-level loss (applied directly to the `EncoderLayer` output), independently of the decoder/PA head loss. This two-stage training strategy — encoder loss + task loss — is the intended paradigm for the full network.
 
 **Sparse gradient routing:** Because inactive Decoder nodes return zero tensors (zero gradients), only the currently active sub-graph participates in weight updates on any given training step. Sparse activation therefore acts as an implicit regulariser.
 

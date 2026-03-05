@@ -21,19 +21,19 @@ The `Model` class implements a **shared backbone + per-problem head** pattern:
                    │DecoderCluster│   ◄── shared across all problems
                    └──────┬──────┘
                           │  (output_nodes, n, n)
-                      flatten → 1-D
+                   passed directly
                           │
             ┌─────────────┼─────────────┐
-            ▼             ▼             ▼
+            ↓             ↓             ↓
        ┌─────────┐  ┌─────────┐  ┌─────────┐
-       │ FCLayer₀ │  │ FCLayer₁ │  │ FCLayer₂ │  ◄── one per problem
-       └────┬────┘  └────┬────┘  └────┬────┘
-            ▼             ▼             ▼
+       │ PALayer₀ │  │ PALayer₁ │  │ PALayer₂ │  ◄── one per problem
+       └────┼───┘  └────┼───┘  └────┼───┘
+            ↓             ↓             ↓
         (out₀,)       (out₁,)       (out₂,)
 ```
 
 **Key principle:** the internal DAG (encoders + decoders) is *identical* for
-every problem. Only the terminal FC head and the *encoder mask* differ.
+every problem. Only the terminal Port Adapter head and the *encoder mask* differ.
 
 ---
 
@@ -48,13 +48,10 @@ and optimisation metadata.
 | Field              | Type  | Default   | Description                                                |
 |--------------------|-------|-----------|------------------------------------------------------------|
 | `n_encoders_used`  | `int` | —         | How many encoder slots this problem activates (≥ 1).       |
-| `fc_out_features`  | `int` | —         | Dimensionality of the FC head output.                      |
-| `fc_activation`    | `str` | `'relu'`  | Activation after the FC linear projection.                 |
+| `pa_out_channels`  | `int` | —         | Output channels of the Port Adapter 1×1 conv.             |
+| `pa_activation`    | `str` | `'sigmoid'` | Activation after the PA conv projection.               |
 
-Supported activations: `relu`, `gelu`, `tanh`, `sigmoid`, `identity`.
-
-### 2.2 `ModelConfig`
-
+Supported activations: `sigmoid`, `relu`, `gelu`, `tanh`, `identity`.
 | Field               | Type                       | Description                                              |
 |----------------------|----------------------------|----------------------------------------------------------|
 | `n`                  | `int`                      | Spatial matrix size — all matrices are $(n, n)$.         |
@@ -115,8 +112,8 @@ cfg = ModelConfig(
     n_decoder_layers=2,
     max_decoder_nodes=50,
     problems=(
-        ProblemConfig(n_encoders_used=2, fc_out_features=10),
-        ProblemConfig(n_encoders_used=3, fc_out_features=64, fc_activation='identity'),
+        ProblemConfig(n_encoders_used=2, pa_out_channels=10),
+        ProblemConfig(n_encoders_used=3, pa_out_channels=64, pa_activation='identity'),
     ),
 )
 
@@ -130,23 +127,21 @@ Internally `__init__` splits the JAX PRNG key into four sub-keys:
 |-----------|----------------------------------------------------|
 | `k_enc`   | Initialise the shared `EncoderLayer` weights.      |
 | `k_dec`   | Initialise the shared `DecoderCluster` weights.    |
-| `k_fc`    | Split further into one key per FC head.            |
-| `k_mask`  | Seed a NumPy `default_rng` for encoder mask generation. |
-
-### 3.1 Shared backbone
-
+| `k_pa`    | Split further into one key per Port Adapter head.  |
 * **`EncoderLayer`** — constructed with `n_inputs = n_encoders`.  Each input is
   a 1-to-8 branching tree of 9 Encoder nodes producing 64 channels.
 * **`DecoderCluster`** — receives `n_inputs = n_encoders × 64` and builds the
   randomised DAG with `n_decoder_layers` / `max_decoder_nodes`.
 
-### 3.2 Per-problem FC heads
+### 3.2 Per-problem Port Adapter heads
 
-One `FCLayer` per problem, each with:
+One `PALayer` per problem, each with:
 
-$$\text{in\_features} = \text{decoder\_cluster.n\_output\_nodes} \times n^{2}$$
+- `n_decoder_nodes = decoder_cluster.n_output_nodes`
+- `n = cfg.n`
+- `pa_out_channels` / `activation` taken from the corresponding `ProblemConfig`
 
-and `out_features` / `activation` taken from the corresponding `ProblemConfig`.
+The output shape per head is `(pa_out_channels × n²,)` — a 1-D task vector.
 
 ### 3.3 Per-problem encoder masks
 
@@ -188,29 +183,29 @@ For default leaf encoder (1 → 8): same → **96 params per node**.
 
 → **137 params per Decoder node**.
 
-**FCLayer** — one dense linear projection:
+**PALayer (Port Adapter)** — one 1×1 conv:
 
-$$\text{params} = \text{fc\_in} \times \text{fc\_out} + \text{fc\_out}$$
+$$\text{params} = n\_nodes \times pa\_out\_ch + pa\_out\_ch$$
 
 ### 4.2 Per-component rollup
 
-| Component           | Formula                              | Example (N=4, D=20, K=16, n=8, fc_out=10) |
+| Component           | Formula                              | Example (N=4, D=20, K=15, n=4, pa_out=4) |
 |---------------------|--------------------------------------|--------------------------------------------|
 | **EncoderLayer**    | $N \times 9 \times 96$               | 4 × 9 × 96 = **3 456**                    |
 | **DecoderCluster**  | $D \times 137$                       | 20 × 137 = **2 740**                      |
-| **FCLayer (per head)** | $K \times n^2 \times \text{fc\_out} + \text{fc\_out}$ | 16 × 64 × 10 + 10 = **10 250**  |
-| **Total (1 problem)** | sum                                 | **16 446**                                |
+| **PALayer (Port Adapter) (per head)** | $n\_nodes \times pa\_out\_ch + pa\_out\_ch$ | 15 × 4 + 4 = **64**  |
+| **Total (1 problem)** | sum                                 | **6 260**                                 |
 
 Where:
 - $N$ = `n_encoders`, $D$ = total decoder nodes, $K$ = `n_output_nodes`
 - Each encoder input spawns 9 nodes (1 root + 8 leaves), each with 96 params
-- FC input size = $K \times n^2$
+- PA output size = `pa_out_channels × n²`
 
 ### 4.3 `model.count_params()` method
 
 ```python
 >>> model.count_params()
-{'encoder_layer': 3456, 'decoder_cluster': 2740, 'fc_heads': [10250], 'total': 16446}
+{'encoder_layer': 3456, 'decoder_cluster': 2740, 'port_adapters': [64], 'total': 6260}
 ```
 
 Returns a dict with per-component breakdowns. Use this to verify sizing and
@@ -220,14 +215,14 @@ monitor scaling as you increase `n`, `n_encoders`, or `max_decoder_nodes`.
 
 | Knob increased       | Encoder params | Decoder params | FC params   | Dominant cost at scale |
 |----------------------|----------------|----------------|-------------|------------------------|
-| `n_encoders` ↑       | Linear in N    | ↑ (more inputs → more L0 nodes) | ↑ (K grows) | FC layer               |
-| `max_decoder_nodes` ↑ | unchanged      | Linear in D    | ↑ (K grows) | FC layer               |
-| `n` ↑                | unchanged      | unchanged      | Quadratic in $n$ ($n^2$ per output node) | FC layer |
-| `fc_out_features` ↑  | unchanged      | unchanged      | Linear      | FC layer               |
+| `n_encoders` ↑       | Linear in N    | ↑ (more inputs → more L0 nodes) | ↑ (K grows) | PA layer               |
+| `max_decoder_nodes` ↑ | unchanged      | Linear in D    | ↑ (K grows) | PA layer               |
+| `n` ↑                | unchanged      | unchanged      | Quadratic in $n$ ($n^2$ per output node) | PA layer |
+| `pa_out_channels` ↑  | unchanged      | unchanged      | Linear      | PA layer               |
 
-**Key insight:** the FC layer dominates total parameter count for larger
-models because its input dimension is $K \times n^2$ and can be very large.
-The encoder and decoder are relatively lightweight (96–137 params per node).
+**Key insight:** the Port Adapter (PALayer) dominates total parameter count for larger
+models only marginally — it uses a 1×1 conv rather than a dense projection, keeping
+the per-head cost at $n\_nodes \times pa\_out\_channels + pa\_out\_channels$ regardless of $n^2$.
 
 ---
 
@@ -241,7 +236,7 @@ out = model(problem_idx, xs)
 |----------------|-----------------------------|-------------------------------------------------|
 | `problem_idx`  | Python `int`                | Selects mask + FC head. **Not** JAX-traced.     |
 | `xs`           | `(n_encoders, 1, n, n)`     | Full input tensor — all encoder slots.          |
-| **returns**    | `(fc_out_features,)`        | Task-specific output from the selected FC head. |
+| **returns**    | `(pa_out_channels × n²,)`   | Task-specific output from the selected Port Adapter. |
 
 ### 5.1 Step-by-step data flow
 
@@ -253,17 +248,17 @@ out = model(problem_idx, xs)
    `(64·N,)` activity flags.
 
 3. **Shared DecoderCluster** — routes the encoder output through the
-   randomised DAG.  Decoder nodes with < 12/16 active parents shut down.
+   randomised DAG.  Decoder nodes with < 8/16 active parents shut down.
 
-4. **Flatten** — all decoder output nodes are reshaped into a single 1-D vector
-   of length `n_output_nodes × n²`.
+4. **Flatten** — the Port Adapter (PALayer) handles reshaping internally from `(n_output_nodes, n, n)`
+   to a 1-D vector of length `pa_out_channels × n²`.
 
-5. **Problem-specific FCLayer** — `fc_heads[problem_idx]` projects the flat
-   vector to `(fc_out_features,)`.
+5. **Problem-specific PALayer** — `port_adapters[problem_idx]` applies a 1×1 conv
+   and returns `(pa_out_channels × n²,)`.
 
 ### 5.2 Why `problem_idx` must be a Python int
 
-Each problem may have a **different** `fc_out_features`, meaning the output
+Each problem may have a **different** `pa_out_channels`, meaning the output
 shape can vary. Because XLA programs are shape-specialised, each distinct
 `problem_idx` value triggers a separate XLA compilation. This is intentional
 and unavoidable.
@@ -276,7 +271,7 @@ and unavoidable.
 | Encoder total   | N × 9 nodes                                 | $O(54 \cdot N \cdot n^3)$          |
 | Decoder (per node)  | `slogdet` $(16,n,n)$ + 28 × matmul     | $O(16 \cdot n^3 + 28 \cdot n^3)$   |
 | Decoder total   | D active nodes                               | $O(44 \cdot D_{\text{active}} \cdot n^3)$ |
-| FC head         | Dense matmul `(K·n², fc_out)`                | $O(K \cdot n^2 \cdot \text{fc\_out})$ |
+| FC head         | 1×1 conv `(n_nodes, pa_out_ch)` + reshape         | $O(n\_nodes \cdot pa\_out\_ch \cdot n^2)$ |
 
 The pairwise matmuls in encoder/decoder are the bottleneck. They scale as
 $O(n^3)$ per pair and there are many pairs (6 per encoder node, 28 per
@@ -295,7 +290,7 @@ decoders/FC simultaneously:
 | Loss              | Trains                          | Applied to              |
 |-------------------|---------------------------------|-------------------------|
 | **Encoder loss**  | `EncoderLayer` conv weights     | `EncoderLayer` outputs  |
-| **Task loss**     | `DecoderCluster` + `FCLayer`    | `model(problem_idx, xs)`|
+| **Task loss**     | `DecoderCluster` + `PALayer`    | `model(problem_idx, xs)`|
 
 ### 6.2 Training a single problem (task loss)
 
@@ -397,9 +392,8 @@ tcfg = TrainingConfig(grad_clip_norm=1.0, learning_rate=1e-3)
 * **Very small n (n=2–3):** Pairwise matmuls on 2×2 or 3×3 matrices carry
   almost no useful information. `slogdet` ranking is noisy on tiny matrices.
 * **Very few active encoders (1 out of many):** Only 64 of the 64·N decoder
-  inputs are active → nearly all decoder nodes fail the 12/16 threshold → the
-  flattened vector is mostly zeros → FC head receives a near-constant zero
-  input.
+  inputs are active → nearly all decoder nodes fail the 8/16 threshold → the
+  Port Adapter receives a near-constant zero input.
 * **Too few decoder nodes (`max_decoder_nodes < ~16`):** The cluster has too
   few nodes for meaningful cross-context mixing.
 
@@ -515,14 +509,10 @@ restored = eqx.tree_deserialise_leaves(buf, skeleton)
 |-------------------------------------|----------------------------------------------------|
 | `model.n_problems`                  | `int` — number of problem heads.                   |
 | `model.n_decoder_output_nodes`      | `int` — total output nodes from the DecoderCluster.|
-| `model.fc_in_features`              | `int` — flattened vector size entering each FC head.|
+| `model.pa_in_shape`                 | `tuple` — `(n_output_nodes, n, n)` feeding each PA head.|
 | `model.active_encoder_indices(idx)` | `np.ndarray[int]` — sorted active encoder indices. |
 | `model.config`                      | `ModelConfig` — the frozen config (static field).  |
-| `model.count_params()`              | `dict` — parameter breakdown (encoder, decoder, FC heads, total). |
-
----
-
-## 12. Quick Reference — Shapes at Each Stage
+| `model.count_params()`              | `dict` — parameter breakdown (encoder, decoder, port_adapters, total). |
 
 For a `ModelConfig(n=8, n_encoders=4, n_decoder_layers=2, max_decoder_nodes=50)`:
 
@@ -531,8 +521,8 @@ For a `ModelConfig(n=8, n_encoders=4, n_decoder_layers=2, max_decoder_nodes=50)`
 | Input `xs`             | `(4, 1, 8, 8)`                    | 4 encoder inputs            |
 | After EncoderLayer     | `(256, 8, 8)` + `(256,)` flags    | 4 × 64 = 256 channels      |
 | After DecoderCluster   | `(K, 8, 8)` + `(K,)` flags        | K = `n_output_nodes`        |
-| Flatten                | `(K × 64,)`                       | K × 8²                     |
-| FC head output         | `(fc_out_features,)`              | Problem-specific            |
+| PALayer input          | `(K, 8, 8)`                       | passed directly (no flatten)|
+| Port Adapter output    | `(pa_out_channels × 64,)`         | pa_out_channels × 8²       |
 
 ---
 
@@ -546,6 +536,7 @@ For a `ModelConfig(n=8, n_encoders=4, n_decoder_layers=2, max_decoder_nodes=50)`
 | `utils/config/__init__.py`   | Re-exports all config symbols.                            |
 | `tests/test_model.py`        | Unit tests — config, construction, forward, training, JIT, serialisation. |
 | `tests/test_model_training.py`| Stress tests — overfitting, batching, timing, stability, checkpoints. |
+| `utils/pa_layer.py`          | `PALayer` class — Port Adapter (1×1 conv head).           |
 
 ---
 
@@ -565,6 +556,5 @@ For a `ModelConfig(n=8, n_encoders=4, n_decoder_layers=2, max_decoder_nodes=50)`
 * **Gradient barrier.** Encoders cannot be trained through the task loss —
   a separate encoder loss must be designed per application.
 
-* **FC layer size dominance.** For large $n$ and many output nodes, the FC
-  weight matrix can become very large. Future work could explore factored /
-  low-rank projections or multiple smaller FC layers.
+* **PA channel count.** For tasks requiring very high-dimensional output, increase
+  `pa_out_channels` or chain a second linear projection after the PALayer output.

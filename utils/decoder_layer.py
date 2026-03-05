@@ -53,7 +53,9 @@ class DecoderLayer(eqx.Module):
     # K stacked Decoder nodes (weight arrays have leading dim K)
     decoders: Decoder
     # Adjacency: (K, 16) int32 — which prev-layer outputs feed each decoder.
-    parent_indices: np.ndarray
+    # Static: wiring is fixed at init and must not be traced through JIT
+    # (avoids np→jax type mutation that would retrigger XLA compilation).
+    parent_indices: np.ndarray = eqx.field(static=True)
 
     def __init__(self, parent_indices: np.ndarray, key: jax.Array):
         """
@@ -107,6 +109,10 @@ class DecoderLayer(eqx.Module):
         preserve     = top_x[:, DECODER_INTERACT_RANKS:
                               DECODER_INTERACT_RANKS + DECODER_PRESERVE_RANKS]  # (K, 4, n, n)
 
+        # Bound to [-1, 1] before pairwise matmuls to prevent overflow
+        top_interact = jnp.tanh(top_interact)
+        preserve     = jnp.tanh(preserve)
+
         # ── Pairwise batched matmul (flat-reshape trick) ──────────────────────
         # Flatten (K, 28) → (K*28) so the matmul has ONE pre-existing batch dim.
         # Under an outer B-vmap, XLA then sees (B, K*28) = 2 batch dims, which
@@ -133,7 +139,7 @@ class DecoderLayer(eqx.Module):
         w2 = self.decoders.conv2.weight[..., 0, 0]  # (K, 1, 4)
         b2 = self.decoders.conv2.bias                # (K, 1, 1, 1)
         pre_act = (jnp.einsum('koi,kihm->kohm', w2, hidden) + b2)  # (K, 1, n, m)
-        active_out = jax.nn.swish(pre_act).squeeze(1)               # (K, n, m)
+        active_out = jnp.tanh(pre_act).squeeze(1)                   # end-of-node activation  (K, n, m)
 
         # ── Gate: zero-out decoders below activation threshold ────────────────
         # jnp.where (lax.select) is vmap-compatible; gradients are masked to
