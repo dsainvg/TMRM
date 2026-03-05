@@ -8,7 +8,7 @@ automatically.
 
 # ── Training hyperparameters ─────────────────────────────────────────────────
 BATCH_SIZE     = 1024
-N_EPOCHS       = 250
+N_EPOCHS       = 500
 LEARNING_RATE  = 5e-3
 OPTIMISER      = "adam"
 LR_SCHEDULE    = "constant"
