@@ -14,7 +14,7 @@ OPTIMISER      = "adam"
 LR_SCHEDULE    = "constant"
 GRAD_CLIP_NORM = 1.01
 LOG_EVERY      = 100
-SEED           = 41
+SEED           = 42
 
 # ── Task / data dimensionality ───────────────────────────────────────────────
 N              = 4    # grid size (N×N cells)
@@ -39,7 +39,7 @@ FLOW_DATASET_FILENAME = "flow_4x4.npz"
 
 # ── Model architecture ───────────────────────────────────────────────────────
 N_DECODER_LAYERS  = 5
-MAX_DECODER_NODES = 170
+MAX_DECODER_NODES = 149
 PA_ACTIVATION     = "sigmoid"   # output activation for the Port Adapter
 
 # ── Encoder node ─────────────────────────────────────────────────────────────
