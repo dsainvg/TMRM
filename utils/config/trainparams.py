@@ -6,14 +6,18 @@ or model architecture.  The config objects below are built from them
 automatically.
 """
 
+#DEFAULTS
+DEBUG = True
+LOGS = False
+
 # ── Training hyperparameters ─────────────────────────────────────────────────
 BATCH_SIZE     = 1024
 N_EPOCHS       = 500
-LEARNING_RATE  = 5e-3
+LEARNING_RATE  = 5e-2
 OPTIMISER      = "adam"
 LR_SCHEDULE    = "constant"
 GRAD_CLIP_NORM = 1.01
-LOG_EVERY      = 100
+LOG_EVERY      = 1
 SEED           = 42
 
 # ── Task / data dimensionality ───────────────────────────────────────────────
@@ -65,12 +69,12 @@ DECODER_HIDDEN_CHANNELS       = 4
 DECODER_OUT_CHANNELS          = 1
 
 # ── DecoderCluster fan-out (Gaussian) ────────────────────────────────────────
-FANOUT_FIRST_MU     = 18    # mean downstream connections (first half of network)
-FANOUT_FIRST_SIGMA  = 3.0
+FANOUT_FIRST_MU     = 20    # mean downstream connections (first half of network)
+FANOUT_FIRST_SIGMA  = 5.0
 FANOUT_FIRST_LO     = 8
 FANOUT_FIRST_HI     = 24
-FANOUT_SECOND_MU    = 12   # mean downstream connections (second half)
-FANOUT_SECOND_SIGMA = 3.0
+FANOUT_SECOND_MU    = 10   # mean downstream connections (second half)
+FANOUT_SECOND_SIGMA = 7.0
 FANOUT_SECOND_LO    = 6
 FANOUT_SECOND_HI    = 20
 

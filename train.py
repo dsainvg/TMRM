@@ -22,7 +22,7 @@ import equinox as eqx
 
 from model import Model
 from utils.config.training import TrainingConfig
-from utils.config.trainparams import TRAIN_CFG, DATA_CFG, FLOW_DATA_CFG, MODEL_CFG
+from utils.config.trainparams import TRAIN_CFG, DATA_CFG, FLOW_DATA_CFG, MODEL_CFG, DEBUG, LOGS
 from utils.otherutils import (
     download_dataset,
     load_data,
@@ -472,4 +472,4 @@ def train(
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    trained_model = train(debug=False)
+    trained_model = train(debug=DEBUG, log=LOGS)
