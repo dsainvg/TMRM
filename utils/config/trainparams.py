@@ -12,7 +12,7 @@ LOGS = False
 
 # ── Training hyperparameters ─────────────────────────────────────────────────
 BATCH_SIZE     = 1024
-N_EPOCHS       = 500
+N_EPOCHS       = 700
 LEARNING_RATE  = 5e-2
 OPTIMISER      = "adam"
 LR_SCHEDULE    = "constant"
